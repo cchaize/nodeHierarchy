@@ -1,0 +1,153 @@
+{
+    "name": "xtrem-nodes-hierarchy",
+    "displayName": "Xtrem Nodes Hierarchy",
+    "description": "Explore the property hierarchy of Xtrem framework nodes",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.109.0"
+    },
+    "categories": [
+        "Other"
+    ],
+    "activationEvents": [
+        "onView:nodesHierarchyView"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "views": {
+            "explorer": [
+                {
+                    "id": "nodesHierarchyView",
+                    "name": "Xtrem Nodes Hierarchy",
+                    "icon": "media/icon.svg",
+                    "contextualTitle": "Xtrem Nodes Hierarchy Explorer"
+                }
+            ]
+        },
+        "commands": [
+            {
+                "command": "xtrem-nodes-hierarchy.search",
+                "title": "Search Node Property",
+                "icon": "$(search)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.searchUpstream",
+                "title": "Search Upstream",
+                "icon": "$(arrow-up)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.searchDownstream",
+                "title": "Search Downstream",
+                "icon": "$(arrow-down)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.refresh",
+                "title": "Refresh",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverrides",
+                "title": "Show Only Nodes with Overrides",
+                "icon": "$(filter)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverridesActive",
+                "title": "Show All Nodes",
+                "icon": "$(filter-filled)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.searchFromEditor",
+                "title": "Node Hierarchy"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.toggleToDownstream",
+                "title": "Switch to Downstream",
+                "icon": "$(arrow-down)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.toggleToUpstream",
+                "title": "Switch to Upstream",
+                "icon": "$(arrow-up)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.showPropertyDetail",
+                "title": "Show Property Declaration",
+                "icon": "$(eye)"
+            }
+        ],
+        "menus": {
+            "view/title": [
+                {
+                    "command": "xtrem-nodes-hierarchy.search",
+                    "when": "view == nodesHierarchyView",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.refresh",
+                    "when": "view == nodesHierarchyView",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverrides",
+                    "when": "view == nodesHierarchyView && !xtremNodesHierarchy.filterActive",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverridesActive",
+                    "when": "view == nodesHierarchyView && xtremNodesHierarchy.filterActive",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.toggleToDownstream",
+                    "when": "view == nodesHierarchyView && xtremNodesHierarchy.currentDirection == upstream",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.toggleToUpstream",
+                    "when": "view == nodesHierarchyView && xtremNodesHierarchy.currentDirection == downstream",
+                    "group": "navigation"
+                }
+            ],
+            "editor/context": [
+                {
+                    "command": "xtrem-nodes-hierarchy.searchFromEditor",
+                    "when": "editorTextFocus && resourceExtname == .ts",
+                    "group": "navigation"
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "xtrem-nodes-hierarchy.showPropertyDetail",
+                    "when": "view == nodesHierarchyView && viewItem == revisionItemWithHierarchy",
+                    "group": "inline"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run package",
+        "compile": "npm run check-types && npm run lint && node esbuild.js",
+        "watch": "npm-run-all -p watch:*",
+        "watch:esbuild": "node esbuild.js --watch",
+        "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+        "package": "npm run check-types && npm run lint && node esbuild.js --production",
+        "compile-tests": "tsc -p . --outDir out",
+        "watch-tests": "tsc -p . -w --outDir out",
+        "pretest": "npm run compile-tests && npm run compile && npm run lint",
+        "check-types": "tsc --noEmit",
+        "lint": "eslint src",
+        "test": "vscode-test"
+    },
+    "devDependencies": {
+        "@types/vscode": "^1.109.0",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "22.x",
+        "typescript-eslint": "^8.54.0",
+        "eslint": "^9.39.2",
+        "esbuild": "^0.27.2",
+        "npm-run-all": "^4.1.5",
+        "typescript": "^5.9.3",
+        "@vscode/test-cli": "^0.0.12",
+        "@vscode/test-electron": "^2.5.2"
+    }
+}
