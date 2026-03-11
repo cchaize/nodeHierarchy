@@ -23,7 +23,13 @@ export class HierarchyTreeItem extends vscode.TreeItem {
         label: string,
         collapsibleState: vscode.TreeItemCollapsibleState,
         public data: {
-            type: "root" | "node" | "property" | "revision";
+            type:
+                | "root"
+                | "node"
+                | "property"
+                | "revision"
+                | "legend"
+                | "legendItem";
             nodeClass?: NodeClass;
             property?: PropertyInfo;
             hierarchy?: HierarchyChain;
@@ -172,7 +178,7 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         element?: HierarchyTreeItem,
     ): Promise<HierarchyTreeItem[]> {
         if (this.isEmpty && !element) {
-            // Show empty state
+            // Show empty state + legend
             const emptyItem = new HierarchyTreeItem(
                 "Search for a node property...",
                 vscode.TreeItemCollapsibleState.None,
@@ -180,15 +186,17 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             );
             emptyItem.description =
                 "Use the search button above to get started";
-            return [emptyItem];
+            return [emptyItem, this.buildLegendItem()];
         }
 
         if (!element) {
             // Root level - show the initial hierarchy if available
+            const items: HierarchyTreeItem[] = [];
             if (this.currentHierarchy) {
-                return this.buildHierarchyView(this.currentHierarchy);
+                items.push(...this.buildHierarchyView(this.currentHierarchy));
             }
-            return [];
+            items.push(this.buildLegendItem());
+            return items;
         }
 
         // Build children based on the element type
@@ -205,9 +213,81 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
                     return this.getPropertyChildren(element.data.hierarchy);
                 }
                 break;
+            case "legend":
+                return this.buildLegendChildren();
         }
 
         return [];
+    }
+
+    private buildLegendItem(): HierarchyTreeItem {
+        const item = new HierarchyTreeItem(
+            "Legend",
+            vscode.TreeItemCollapsibleState.Collapsed,
+            { type: "legend" },
+        );
+        item.iconPath = new vscode.ThemeIcon("info");
+        return item;
+    }
+
+    private buildLegendChildren(): HierarchyTreeItem[] {
+        const entries: {
+            icon: string;
+            color: string;
+            label: string;
+            detail: string;
+        }[] = [
+            {
+                icon: "symbol-class",
+                color: "editorError.foreground",
+                label: "Node — property defined here",
+                detail: "Red: the property is declared or overridden in this node",
+            },
+            {
+                icon: "symbol-class",
+                color: "editorInfo.foreground",
+                label: "Node — property inherited",
+                detail: "Blue: the property is inherited and unchanged in this node",
+            },
+            {
+                icon: "symbol-interface",
+                color: "editorError.foreground",
+                label: "SubNode — property defined here",
+                detail: "Red: the property is declared or overridden in this subNode",
+            },
+            {
+                icon: "symbol-interface",
+                color: "editorInfo.foreground",
+                label: "SubNode — property inherited",
+                detail: "Blue: the property is inherited and unchanged in this subNode",
+            },
+            {
+                icon: "warning",
+                color: "editorError.foreground",
+                label: "Node with extension — property defined here",
+                detail: "An extension exists and may further override this property",
+            },
+            {
+                icon: "warning",
+                color: "editorInfo.foreground",
+                label: "Node with extension — property inherited",
+                detail: "An extension exists and may override this property",
+            },
+        ];
+
+        return entries.map(({ icon, color, label, detail }) => {
+            const item = new HierarchyTreeItem(
+                label,
+                vscode.TreeItemCollapsibleState.None,
+                { type: "legendItem" },
+            );
+            item.iconPath = new vscode.ThemeIcon(
+                icon,
+                new vscode.ThemeColor(color),
+            );
+            item.tooltip = detail;
+            return item;
+        });
     }
 
     /**
