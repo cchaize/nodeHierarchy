@@ -84,9 +84,17 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
     private currentDirection: "upstream" | "downstream" = "upstream";
     private currentNodeName: string | null = null;
     private currentPropertyName: string | null = null;
+    private outputChannel: vscode.OutputChannel | undefined;
 
-    constructor(parser: XtremNodeParser) {
+    constructor(parser: XtremNodeParser, outputChannel?: vscode.OutputChannel) {
         this.parser = parser;
+        this.outputChannel = outputChannel;
+    }
+
+    private log(message: string): void {
+        if (this.outputChannel) {
+            this.outputChannel.appendLine(`[HierarchyProvider] ${message}`);
+        }
     }
 
     /**
@@ -275,11 +283,14 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             }
         }
 
-        // Count visible child packages
-        const childPackages = packageHierarchy.get(pkgName) || [];
-        for (const childPkg of childPackages) {
+        // Count visible related packages (children for downstream, parents for upstream)
+        const relatedPackages =
+            this.currentDirection === "upstream"
+                ? this.getParentPackages(pkgName, packageHierarchy)
+                : packageHierarchy.get(pkgName) || [];
+        for (const relatedPkg of relatedPackages) {
             count += this.countVisibleChildrenForPackage(
-                childPkg,
+                relatedPkg,
                 nodesByPackage,
                 packageHierarchy,
                 revisionsByNode,
@@ -290,8 +301,45 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
     }
 
     /**
-     * Get children for a property item showing revisions grouped by package
+     * Get parent packages for a given package
      */
+    private getParentPackages(
+        packageName: string,
+        packageHierarchy: Map<string, string[]>,
+    ): string[] {
+        const parents: string[] = [];
+        for (const [parent, children] of packageHierarchy) {
+            if (children.includes(packageName)) {
+                parents.push(parent);
+            }
+        }
+        return parents;
+    }
+
+    /**
+     * Resolve the package of the currently selected node/property to keep tree roots stable.
+     */
+    private getSelectedPackage(
+        packages: Set<string>,
+        hierarchy: HierarchyChain,
+    ): string | undefined {
+        if (this.currentNodeName) {
+            const currentNode = this.parser.getNode(this.currentNodeName);
+            const currentPkg = currentNode?.packageName;
+            if (currentPkg && packages.has(currentPkg)) {
+                return currentPkg;
+            }
+        }
+
+        const declaredNode = this.parser.getNode(hierarchy.property.declaredIn);
+        const declaredPkg = declaredNode?.packageName;
+        if (declaredPkg && packages.has(declaredPkg)) {
+            return declaredPkg;
+        }
+
+        return undefined;
+    }
+
     private getPropertyChildren(
         hierarchy: HierarchyChain,
     ): HierarchyTreeItem[] {
@@ -324,7 +372,10 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         // Helper function to create a package tree item
         const buildPackageTree = (pkgName: string): HierarchyTreeItem => {
             const nodes = nodesByPackage.get(pkgName) || [];
-            const children = packageHierarchy.get(pkgName) || [];
+            const children =
+                this.currentDirection === "upstream"
+                    ? this.getParentPackages(pkgName, packageHierarchy)
+                    : packageHierarchy.get(pkgName) || [];
 
             // Create package item with children flag
             const packageItem = new HierarchyTreeItem(
@@ -346,35 +397,53 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             return packageItem;
         };
 
-        // Find root packages (those without parents in the hierarchy)
-        const rootPackages: string[] = [];
-        for (const [pkg] of packageHierarchy) {
-            // A package is a root if no other package has it as a child
-            let isRoot = true;
-            for (const [, pkgChildren] of packageHierarchy) {
-                if (pkgChildren.includes(pkg)) {
-                    isRoot = false;
-                    break;
+        // Start from the selected node package when available
+        const startPackages: string[] = [];
+        const selectedPackage = this.getSelectedPackage(packages, hierarchy);
+        if (selectedPackage) {
+            startPackages.push(selectedPackage);
+        }
+
+        if (
+            startPackages.length === 0 &&
+            this.currentDirection === "upstream"
+        ) {
+            // For upstream, start from leaf packages (those that are not parents in the hierarchy)
+            for (const pkg of packages) {
+                if (!packageHierarchy.has(pkg)) {
+                    startPackages.push(pkg);
                 }
             }
-            if (isRoot) {
-                rootPackages.push(pkg);
+        } else if (startPackages.length === 0) {
+            // For downstream, start from root packages (those without parents in the hierarchy)
+            for (const [pkg] of packageHierarchy) {
+                // A package is a root if no other package has it as a child
+                let isRoot = true;
+                for (const [, pkgChildren] of packageHierarchy) {
+                    if (pkgChildren.includes(pkg)) {
+                        isRoot = false;
+                        break;
+                    }
+                }
+                if (isRoot) {
+                    startPackages.push(pkg);
+                }
             }
         }
 
-        // Build tree from roots
-        for (const rootPkg of rootPackages) {
+        // Build tree from start packages
+        for (const startPkg of startPackages) {
             // If filter is active, only add package if it has visible children
             if (
                 !this.showOnlyWithOverrides ||
                 this.countVisibleChildrenForPackage(
-                    rootPkg,
+                    startPkg,
                     nodesByPackage,
                     packageHierarchy,
                     revisionsByNode,
                 ) > 0
             ) {
-                items.push(buildPackageTree(rootPkg));
+                items.push(buildPackageTree(startPkg));
             }
         }
 
@@ -402,14 +471,18 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             revisionsByNode.get(revision.className)!.push(revision);
         }
 
-        // Add child packages first
-        const childPackages = packageHierarchy.get(packageName) || [];
-        for (const childPkg of childPackages) {
-            // If filter is active, only add child package if it has visible children
+        // Add related packages (child for downstream, parent for upstream)
+        const relatedPackages =
+            this.currentDirection === "upstream"
+                ? this.getParentPackages(packageName, packageHierarchy)
+                : packageHierarchy.get(packageName) || [];
+
+        for (const relatedPkg of relatedPackages) {
+            // If filter is active, only add related package if it has visible children
             if (
                 this.showOnlyWithOverrides &&
                 this.countVisibleChildrenForPackage(
-                    childPkg,
+                    relatedPkg,
                     nodesByPackage,
                     packageHierarchy,
                     revisionsByNode,
@@ -418,24 +491,28 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
                 continue;
             }
 
-            const childNodes = nodesByPackage.get(childPkg) || [];
-            const childItem = new HierarchyTreeItem(
-                childPkg,
-                packageHierarchy.has(childPkg) &&
-                    (packageHierarchy.get(childPkg) || []).length > 0
+            const relatedNodes = nodesByPackage.get(relatedPkg) || [];
+            const relatedItem = new HierarchyTreeItem(
+                relatedPkg,
+                (
+                    this.currentDirection === "upstream"
+                        ? this.getParentPackages(relatedPkg, packageHierarchy)
+                              .length > 0
+                        : (packageHierarchy.get(relatedPkg) || []).length > 0
+                )
                     ? vscode.TreeItemCollapsibleState.Collapsed
                     : vscode.TreeItemCollapsibleState.Collapsed,
                 {
                     type: "package",
-                    packageName: childPkg,
-                    packageNodes: childNodes,
+                    packageName: relatedPkg,
+                    packageNodes: relatedNodes,
                     hierarchy: hierarchy,
                     packageHierarchy: packageHierarchy,
                     nodesByPackage: nodesByPackage,
                 },
             );
-            childItem.description = `${childNodes.length} class${childNodes.length > 1 ? "es" : ""}`;
-            items.push(childItem);
+            relatedItem.description = `${relatedNodes.length} class${relatedNodes.length > 1 ? "es" : ""}`;
+            items.push(relatedItem);
         }
 
         // Create items for each class in this package

@@ -52,8 +52,6 @@ export class XtremNodeParser {
     private log(message: string): void {
         if (this.outputChannel) {
             this.outputChannel.appendLine(message);
-        } else {
-            console.log(message);
         }
     }
 
@@ -104,7 +102,7 @@ export class XtremNodeParser {
             }
         } catch (error) {
             // Ignore errors if package.json doesn't exist
-            console.log(`Could not load package.json for ${packageRoot}`);
+            this.log(`Could not load package.json for ${packageRoot}`);
         }
 
         return dependencies;
@@ -255,7 +253,7 @@ export class XtremNodeParser {
 
                             this.nodeCache.set(className, nodeClass);
                             nodeCount++;
-                            console.log(
+                            this.log(
                                 `Found node: ${className} with ${nodeClass.properties.size} properties (extends: ${extendedClass || "none"})`,
                             );
                             break;

@@ -26,7 +26,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Initialize the parser and provider
     parser = new XtremNodeParser(outputChannel);
-    provider = new HierarchyTreeDataProvider(parser);
+    provider = new HierarchyTreeDataProvider(parser, outputChannel);
     searchInput = new HierarchySearchInput(parser, provider);
     propertyDetailView = new PropertyDetailView(parser, outputChannel);
 

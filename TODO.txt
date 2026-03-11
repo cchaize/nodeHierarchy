@@ -1,0 +1,4 @@
+Pour compiler et installer l'extension:
+
+vsce package --allow-missing-repository && code --install-extension xtrem-nodes-hierarchy-0.0.1.vsix --force
+
