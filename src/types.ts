@@ -27,7 +27,7 @@ export interface NodeRevision {
  */
 export interface NodeClass {
     name: string;
-    type: "node" | "subNode";
+    type: "node" | "subNode" | "extension";
     sourcePath: string;
     lineNumber: number;
     packageName?: string; // extracted from path (e.g., 'xtrem-master-data')

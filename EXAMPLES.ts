@@ -6,7 +6,7 @@
 import { decorators, ui } from "@sage/xtrem-framework";
 
 // ============================================================================
-// Base Node Definition
+// Base Node Definition defined in xtrem-master-data package
 // ============================================================================
 
 @decorators.node()
@@ -31,7 +31,7 @@ export class BaseDocumentItemLine {
 }
 
 // ============================================================================
-// Intermediate Node (extends base, adds new properties)
+// Intermediate Node (extends base, adds new properties) defined in xtrem-distribution package
 // ============================================================================
 
 @decorators.node()
@@ -57,7 +57,7 @@ export class BaseOutboundDocumentLine extends BaseDocumentItemLine {
 }
 
 // ============================================================================
-// Concrete Node (extends intermediate, specialized for specific use case)
+// Concrete Node (extends intermediate, specialized for specific use case) defined in xtrem-sales package
 // ============================================================================
 
 @decorators.subNode()
@@ -78,7 +78,7 @@ export class SalesOrderLine extends BaseOutboundDocumentLine {
 }
 
 // ============================================================================
-// Another Concrete Node (extends base, different specialization)
+// Another Concrete Node (extends base, different specialization) defined in xtrem-purchasing package
 // ============================================================================
 
 @decorators.subNode()
@@ -103,28 +103,35 @@ export class PurchaseOrderLine extends BaseOutboundDocumentLine {
 /*
 EXAMPLE SEARCHES:
 
+Legend:
+* the property is defined/override
+- the property is not defined/override but inherited from parent class
+
 1. Search for "unit" property in "BaseOutboundDocumentLine" (upstream)
    Result shows:
-   - BaseDocumentItemLine (original definition)
-   - BaseOutboundDocumentLine (inherited, no override)
-   - SalesOrderLine (revised with different params)
-
+    - BaseOutboundDocumentLine (xtrem-distribution)
+        * BaseDocumentItemLine (xtrem-master-data)
+   
 2. Search for "unit" property in "SalesOrderLine" (upstream)
    Result shows:
-   - BaseDocumentItemLine (original definition)
-   - SalesOrderLine (revised definition)
+    * SalesOrderLine (revised definition)
+        - BaseOutboundDocumentLine (xtrem-distribution)
+            * BaseDocumentItemLine (xtrem-master-data)
 
 3. Search for "itemRef" property in "BaseDocumentItemLine" (downstream)
    Result shows all classes that inherit this property:
-   - BaseOutboundDocumentLine (inherited)
-   - SalesOrderLine (inherited)
-   - PurchaseOrderLine (inherited)
-   - Possibly others
+    * BaseDocumentItemLine (xtrem-master-data)
+        * BaseOutboundDocumentLine (xtrem-distribution)
+            - SalesOrderLine (xtrem-sales)
+            - PurchaseOrderLine (xtrem-purchasing)
+   (Possibly others)
 
 4. Search for "itemRef" property in "BaseOutboundDocumentLine" (downstream)
    Result shows:
-   - SalesOrderLine (inherited, uses parent's version)
-   - PurchaseOrderLine (inherited, uses parent's version)
+    * BaseOutboundDocumentLine (xtrem-distribution)
+        - SalesOrderLine (xtrem-sales)
+        - PurchaseOrderLine (xtrem-purchasing)
+   (Possibly others)
 
 PATTERNS DEMONSTRATED:
 

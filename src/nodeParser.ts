@@ -274,7 +274,7 @@ export class XtremNodeParser {
      */
     private getNodeDecoratorType(
         decorator: ts.Decorator,
-    ): "node" | "subNode" | null {
+    ): "node" | "subNode" | "extension" | null {
         const expression = decorator.expression;
         let decoratorText = "";
 
@@ -284,6 +284,12 @@ export class XtremNodeParser {
             decoratorText = expression.getText();
         }
 
+        // Check nodeExtension BEFORE node to avoid false positive (nodeExtension contains "node")
+        if (
+            decoratorText.match(/@?decorators\.nodeExtension|@?nodeExtension/i)
+        ) {
+            return "extension";
+        }
         // Check for various patterns: @decorators.node, @decorators.subNode, etc.
         if (decoratorText.match(/@?decorators\.subNode|@?subNode/i)) {
             return "subNode";
@@ -537,10 +543,8 @@ export class XtremNodeParser {
         const revisions: PropertyInfo[] = [];
 
         if (direction === "upstream") {
-            // Go up the inheritance chain using both cache and type checker
-            const declaringNode =
-                this.nodeCache.get(property.declaredIn) || node;
-            let currentNode: NodeClass | undefined = declaringNode;
+            // Go up the inheritance chain starting from the selected node.
+            let currentNode: NodeClass | undefined = node;
             while (currentNode) {
                 chain.push(currentNode);
 
@@ -613,18 +617,15 @@ export class XtremNodeParser {
                 }
             }
         } else {
-            // Go down the inheritance chain (find all subclasses)
-            const declaringNode =
-                this.nodeCache.get(property.declaredIn) || node;
-            chain.push(declaringNode);
-            revisions.push(property);
+            // Go down the inheritance chain starting from the selected node.
+            chain.push(node);
 
-            this.findSubclassesRecursive(
-                declaringNode,
-                propertyName,
-                chain,
-                revisions,
-            );
+            const nodeProperty = node.properties.get(propertyName);
+            if (nodeProperty) {
+                revisions.push(nodeProperty);
+            }
+
+            this.findSubclassesRecursive(node, propertyName, chain, revisions);
         }
 
         return {
@@ -778,6 +779,18 @@ export class XtremNodeParser {
      */
     getNode(name: string): NodeClass | undefined {
         return this.nodeCache.get(name);
+    }
+
+    /**
+     * Get the extension node for a given node, if one exists
+     * e.g. for "Item" returns the "ItemExtension" node
+     */
+    getNodeExtension(nodeName: string): NodeClass | undefined {
+        const extensionNode = this.nodeCache.get(`${nodeName}Extension`);
+        if (extensionNode?.type === "extension") {
+            return extensionNode;
+        }
+        return undefined;
     }
 
     /**

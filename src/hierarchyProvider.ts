@@ -23,14 +23,10 @@ export class HierarchyTreeItem extends vscode.TreeItem {
         label: string,
         collapsibleState: vscode.TreeItemCollapsibleState,
         public data: {
-            type: "root" | "node" | "property" | "revision" | "package";
+            type: "root" | "node" | "property" | "revision";
             nodeClass?: NodeClass;
             property?: PropertyInfo;
             hierarchy?: HierarchyChain;
-            packageName?: string;
-            packageNodes?: NodeClass[];
-            packageHierarchy?: Map<string, string[]>;
-            nodesByPackage?: Map<string, NodeClass[]>;
         },
     ) {
         super(label, collapsibleState);
@@ -39,10 +35,6 @@ export class HierarchyTreeItem extends vscode.TreeItem {
 
     private setupUI(): void {
         switch (this.data.type) {
-            case "package":
-                this.iconPath = new vscode.ThemeIcon("package");
-                this.contextValue = "packageItem";
-                break;
             case "node":
                 this.iconPath = new vscode.ThemeIcon("symbol-class");
                 // Use nodeItemWithHierarchy if this node has hierarchy info for the property detail action
@@ -95,6 +87,28 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         if (this.outputChannel) {
             this.outputChannel.appendLine(`[HierarchyProvider] ${message}`);
         }
+    }
+
+    private formatNodeLabel(nodeClass: NodeClass): string {
+        return nodeClass.name;
+    }
+
+    private getNodeHierarchyIcon(
+        nodeClass: NodeClass,
+        isDefinedInNode: boolean,
+    ): vscode.ThemeIcon {
+        const iconId =
+            nodeClass.type === "subNode" ? "symbol-interface" : "symbol-class";
+
+        return isDefinedInNode
+            ? new vscode.ThemeIcon(
+                  iconId,
+                  new vscode.ThemeColor("editorError.foreground"),
+              )
+            : new vscode.ThemeIcon(
+                  iconId,
+                  new vscode.ThemeColor("editorInfo.foreground"),
+              );
     }
 
     /**
@@ -181,22 +195,6 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         switch (element.data.type) {
             case "root":
                 return [];
-            case "package":
-                if (
-                    element.data.packageNodes &&
-                    element.data.hierarchy &&
-                    element.data.packageHierarchy &&
-                    element.data.nodesByPackage
-                ) {
-                    return this.getPackageChildren(
-                        element.data.packageName || "",
-                        element.data.packageNodes,
-                        element.data.hierarchy,
-                        element.data.packageHierarchy,
-                        element.data.nodesByPackage,
-                    );
-                }
-                break;
             case "node":
                 if (element.data.nodeClass) {
                     return this.getNodeChildren(element.data.nodeClass);
@@ -240,15 +238,23 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
      * Get children for a node item
      */
     private getNodeChildren(nodeClass: NodeClass): HierarchyTreeItem[] {
+        if (this.currentHierarchy) {
+            return this.getHierarchyNodeChildren(
+                nodeClass,
+                this.currentHierarchy,
+            );
+        }
+
         const items: HierarchyTreeItem[] = [];
 
         if (nodeClass.extends) {
+            const parentNode = this.parser.getNode(nodeClass.extends);
             const parentItem = new HierarchyTreeItem(
-                `extends: ${nodeClass.extends}`,
+                `extends: ${parentNode ? this.formatNodeLabel(parentNode) : nodeClass.extends}`,
                 vscode.TreeItemCollapsibleState.Collapsed,
                 {
                     type: "node",
-                    nodeClass: this.parser.getNode(nodeClass.extends),
+                    nodeClass: parentNode,
                 },
             );
             parentItem.iconPath = new vscode.ThemeIcon("symbol-interface");
@@ -258,109 +264,238 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         return items;
     }
 
-    /**
-     * Count visible children for a package (includes child packages and filtered nodes)
-     */
-    private countVisibleChildrenForPackage(
-        pkgName: string,
-        nodesByPackage: Map<string, NodeClass[]>,
-        packageHierarchy: Map<string, string[]>,
+    private isPropertyDefinedInNode(
+        nodeClass: NodeClass,
         revisionsByNode: Map<string, NodeRevision[]>,
-    ): number {
-        let count = 0;
-
-        // Count visible nodes in this package
-        const nodesInPackage = nodesByPackage.get(pkgName) || [];
-        for (const nodeClass of nodesInPackage) {
-            // If filter is enabled, only count nodes with overrides
-            if (this.showOnlyWithOverrides) {
-                const revisions = revisionsByNode.get(nodeClass.name) || [];
-                if (revisions.length > 0) {
-                    count++;
-                }
-            } else {
-                count++;
-            }
-        }
-
-        // Count visible related packages (children for downstream, parents for upstream)
-        const relatedPackages =
-            this.currentDirection === "upstream"
-                ? this.getParentPackages(pkgName, packageHierarchy)
-                : packageHierarchy.get(pkgName) || [];
-        for (const relatedPkg of relatedPackages) {
-            count += this.countVisibleChildrenForPackage(
-                relatedPkg,
-                nodesByPackage,
-                packageHierarchy,
-                revisionsByNode,
-            );
-        }
-
-        return count;
+    ): boolean {
+        return (revisionsByNode.get(nodeClass.name) || []).length > 0;
     }
 
-    /**
-     * Get parent packages for a given package
-     */
-    private getParentPackages(
-        packageName: string,
-        packageHierarchy: Map<string, string[]>,
-    ): string[] {
-        const parents: string[] = [];
-        for (const [parent, children] of packageHierarchy) {
-            if (children.includes(packageName)) {
-                parents.push(parent);
-            }
-        }
-        return parents;
-    }
-
-    /**
-     * Resolve the package of the currently selected node/property to keep tree roots stable.
-     */
-    private getSelectedPackage(
-        packages: Set<string>,
+    private getVisibleHierarchyNodes(
         hierarchy: HierarchyChain,
-    ): string | undefined {
-        if (this.currentNodeName) {
-            const currentNode = this.parser.getNode(this.currentNodeName);
-            const currentPkg = currentNode?.packageName;
-            if (currentPkg && packages.has(currentPkg)) {
-                return currentPkg;
+        revisionsByNode: Map<string, NodeRevision[]>,
+    ): NodeClass[] {
+        return hierarchy.chain.filter((nodeClass) => {
+            if (!this.showOnlyWithOverrides) {
+                return true;
             }
-        }
 
-        const declaredNode = this.parser.getNode(hierarchy.property.declaredIn);
-        const declaredPkg = declaredNode?.packageName;
-        if (declaredPkg && packages.has(declaredPkg)) {
-            return declaredPkg;
+            return this.isPropertyDefinedInNode(nodeClass, revisionsByNode);
+        });
+    }
+
+    private getParentNodeInHierarchy(
+        nodeClass: NodeClass,
+        visibleNodes: Map<string, NodeClass>,
+    ): NodeClass | undefined {
+        let parentName = nodeClass.extends;
+
+        while (parentName) {
+            const parentNode = visibleNodes.get(parentName);
+            if (parentNode) {
+                return parentNode;
+            }
+
+            parentName = this.parser.getNode(parentName)?.extends;
         }
 
         return undefined;
     }
 
+    private getHierarchyRoots(
+        visibleHierarchyNodes: NodeClass[],
+        visibleNodesByName: Map<string, NodeClass>,
+    ): NodeClass[] {
+        if (this.currentDirection === "upstream") {
+            return visibleHierarchyNodes.length > 0
+                ? [visibleHierarchyNodes[0]]
+                : [];
+        }
+
+        return visibleHierarchyNodes.filter(
+            (nodeClass) =>
+                !this.getParentNodeInHierarchy(nodeClass, visibleNodesByName),
+        );
+    }
+
+    private getNodeOpenTarget(
+        nodeClass: NodeClass,
+        hierarchy: HierarchyChain,
+    ): { sourcePath: string; lineNumber: number } {
+        const propertyInNode = nodeClass.properties.get(
+            hierarchy.property.name,
+        );
+
+        if (propertyInNode) {
+            return {
+                sourcePath: propertyInNode.sourcePath,
+                lineNumber: propertyInNode.lineNumber,
+            };
+        }
+
+        return {
+            sourcePath: nodeClass.sourcePath,
+            lineNumber: nodeClass.lineNumber,
+        };
+    }
+
+    private createHierarchyNodeItem(
+        nodeClass: NodeClass,
+        hierarchy: HierarchyChain,
+        revisionsByNode: Map<string, NodeRevision[]>,
+        visibleNodesByName: Map<string, NodeClass>,
+    ): HierarchyTreeItem {
+        const isOverride = this.isPropertyDefinedInNode(
+            nodeClass,
+            revisionsByNode,
+        );
+        const hasChildren =
+            this.getHierarchyChildNodes(
+                nodeClass,
+                hierarchy,
+                revisionsByNode,
+                visibleNodesByName,
+            ).length > 0;
+
+        const nodeItem = new HierarchyTreeItem(
+            this.formatNodeLabel(nodeClass),
+            hasChildren
+                ? vscode.TreeItemCollapsibleState.Expanded
+                : vscode.TreeItemCollapsibleState.None,
+            {
+                type: "node",
+                nodeClass: nodeClass,
+                hierarchy: hierarchy,
+            },
+        );
+
+        const itemId = `${nodeClass.name}_${hierarchy.property.name}_${Date.now()}_${Math.random()}`;
+        nodeItem.treeItemId = itemId;
+        treeItemContextRegistry.set(itemId, {
+            nodeClass: nodeClass,
+            hierarchy: hierarchy,
+        });
+
+        nodeItem.iconPath = this.getNodeHierarchyIcon(nodeClass, isOverride);
+        nodeItem.label = this.formatNodeLabel(nodeClass);
+        nodeItem.description = nodeClass.packageName
+            ? `${nodeClass.packageName} • ${nodeClass.type}`
+            : nodeClass.type;
+
+        const extension = this.parser.getNodeExtension(nodeClass.name);
+        if (extension) {
+            const iconColor = isOverride
+                ? new vscode.ThemeColor("editorError.foreground")
+                : new vscode.ThemeColor("editorInfo.foreground");
+            nodeItem.iconPath = new vscode.ThemeIcon("warning", iconColor);
+            const tooltip = new vscode.MarkdownString("", true);
+            tooltip.supportHtml = true;
+            tooltip.appendMarkdown(
+                `**${this.formatNodeLabel(nodeClass)}**` +
+                    (nodeClass.packageName
+                        ? ` • ${nodeClass.packageName} • ${nodeClass.type}`
+                        : ` • ${nodeClass.type}`) +
+                    `\n\n<span style="color:orange;">⚠ An extension (**${extension.name}**) exists and may override this property</span>`,
+            );
+            nodeItem.tooltip = tooltip;
+        } else {
+            nodeItem.tooltip = nodeClass.packageName
+                ? `${this.formatNodeLabel(nodeClass)} • ${nodeClass.packageName} • ${nodeClass.type}`
+                : `${this.formatNodeLabel(nodeClass)} • ${nodeClass.type}`;
+        }
+        const openTarget = this.getNodeOpenTarget(nodeClass, hierarchy);
+        nodeItem.command = {
+            title: "Open File",
+            command: "vscode.open",
+            arguments: [
+                vscode.Uri.file(openTarget.sourcePath),
+                {
+                    selection: new vscode.Range(
+                        openTarget.lineNumber - 1,
+                        0,
+                        openTarget.lineNumber - 1,
+                        0,
+                    ),
+                },
+            ],
+        };
+
+        return nodeItem;
+    }
+
+    private getHierarchyChildNodes(
+        nodeClass: NodeClass,
+        hierarchy: HierarchyChain,
+        revisionsByNode: Map<string, NodeRevision[]>,
+        visibleNodesByName: Map<string, NodeClass>,
+    ): NodeClass[] {
+        const visibleHierarchyNodes = this.getVisibleHierarchyNodes(
+            hierarchy,
+            revisionsByNode,
+        );
+
+        if (this.currentDirection === "upstream") {
+            const parentNode = this.getParentNodeInHierarchy(
+                nodeClass,
+                visibleNodesByName,
+            );
+            return parentNode ? [parentNode] : [];
+        }
+
+        return visibleHierarchyNodes.filter((candidateNode) => {
+            if (candidateNode.name === nodeClass.name) {
+                return false;
+            }
+
+            const parentNode = this.getParentNodeInHierarchy(
+                candidateNode,
+                visibleNodesByName,
+            );
+            return parentNode?.name === nodeClass.name;
+        });
+    }
+
+    private getHierarchyNodeChildren(
+        nodeClass: NodeClass,
+        hierarchy: HierarchyChain,
+    ): HierarchyTreeItem[] {
+        const revisionsByNode = new Map<string, NodeRevision[]>();
+        for (const revision of hierarchy.revisions) {
+            if (!revisionsByNode.has(revision.className)) {
+                revisionsByNode.set(revision.className, []);
+            }
+            revisionsByNode.get(revision.className)!.push(revision);
+        }
+
+        const visibleHierarchyNodes = this.getVisibleHierarchyNodes(
+            hierarchy,
+            revisionsByNode,
+        );
+        const visibleNodesByName = new Map(
+            visibleHierarchyNodes.map((visibleNode) => [
+                visibleNode.name,
+                visibleNode,
+            ]),
+        );
+
+        return this.getHierarchyChildNodes(
+            nodeClass,
+            hierarchy,
+            revisionsByNode,
+            visibleNodesByName,
+        ).map((childNode) =>
+            this.createHierarchyNodeItem(
+                childNode,
+                hierarchy,
+                revisionsByNode,
+                visibleNodesByName,
+            ),
+        );
+    }
+
     private getPropertyChildren(
         hierarchy: HierarchyChain,
     ): HierarchyTreeItem[] {
-        const items: HierarchyTreeItem[] = [];
-
-        // Group nodes by package
-        const nodesByPackage = new Map<string, typeof hierarchy.chain>();
-        const packages = new Set<string>();
-        for (const nodeClass of hierarchy.chain) {
-            const pkg = nodeClass.packageName || "unknown";
-            packages.add(pkg);
-            if (!nodesByPackage.has(pkg)) {
-                nodesByPackage.set(pkg, []);
-            }
-            nodesByPackage.get(pkg)!.push(nodeClass);
-        }
-
-        // Build package hierarchy based on dependencies
-        const packageHierarchy = this.parser.buildPackageHierarchy(packages);
-
-        // Group revisions by node for visibility checking
         const revisionsByNode = new Map<string, NodeRevision[]>();
         for (const revision of hierarchy.revisions) {
             if (!revisionsByNode.has(revision.className)) {
@@ -368,253 +503,28 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             }
             revisionsByNode.get(revision.className)!.push(revision);
         }
+        const visibleHierarchyNodes = this.getVisibleHierarchyNodes(
+            hierarchy,
+            revisionsByNode,
+        );
+        const visibleNodesByName = new Map(
+            visibleHierarchyNodes.map((visibleNode) => [
+                visibleNode.name,
+                visibleNode,
+            ]),
+        );
 
-        // Helper function to create a package tree item
-        const buildPackageTree = (pkgName: string): HierarchyTreeItem => {
-            const nodes = nodesByPackage.get(pkgName) || [];
-            const children =
-                this.currentDirection === "upstream"
-                    ? this.getParentPackages(pkgName, packageHierarchy)
-                    : packageHierarchy.get(pkgName) || [];
-
-            // Create package item with children flag
-            const packageItem = new HierarchyTreeItem(
-                pkgName,
-                children.length > 0 || nodes.length > 0
-                    ? vscode.TreeItemCollapsibleState.Collapsed
-                    : vscode.TreeItemCollapsibleState.None,
-                {
-                    type: "package",
-                    packageName: pkgName,
-                    packageNodes: nodes,
-                    hierarchy: hierarchy,
-                    packageHierarchy: packageHierarchy,
-                    nodesByPackage: nodesByPackage,
-                },
-            );
-            packageItem.description = `${nodes.length} class${nodes.length > 1 ? "es" : ""}`;
-
-            return packageItem;
-        };
-
-        // Start from the selected node package when available
-        const startPackages: string[] = [];
-        const selectedPackage = this.getSelectedPackage(packages, hierarchy);
-        if (selectedPackage) {
-            startPackages.push(selectedPackage);
-        }
-
-        if (
-            startPackages.length === 0 &&
-            this.currentDirection === "upstream"
-        ) {
-            // For upstream, start from leaf packages (those that are not parents in the hierarchy)
-            for (const pkg of packages) {
-                if (!packageHierarchy.has(pkg)) {
-                    startPackages.push(pkg);
-                }
-            }
-        } else if (startPackages.length === 0) {
-            // For downstream, start from root packages (those without parents in the hierarchy)
-            for (const [pkg] of packageHierarchy) {
-                // A package is a root if no other package has it as a child
-                let isRoot = true;
-                for (const [, pkgChildren] of packageHierarchy) {
-                    if (pkgChildren.includes(pkg)) {
-                        isRoot = false;
-                        break;
-                    }
-                }
-                if (isRoot) {
-                    startPackages.push(pkg);
-                }
-            }
-        }
-
-        // Build tree from start packages
-        for (const startPkg of startPackages) {
-            // If filter is active, only add package if it has visible children
-            if (
-                !this.showOnlyWithOverrides ||
-                this.countVisibleChildrenForPackage(
-                    startPkg,
-                    nodesByPackage,
-                    packageHierarchy,
-                    revisionsByNode,
-                ) > 0
-            ) {
-                items.push(buildPackageTree(startPkg));
-            }
-        }
-
-        return items;
-    }
-
-    /**
-     * Get children for a package item showing child packages and classes
-     */
-    private getPackageChildren(
-        packageName: string,
-        nodes: NodeClass[],
-        hierarchy: HierarchyChain,
-        packageHierarchy: Map<string, string[]>,
-        nodesByPackage: Map<string, NodeClass[]>,
-    ): HierarchyTreeItem[] {
-        const items: HierarchyTreeItem[] = [];
-
-        // Group revisions by node
-        const revisionsByNode = new Map<string, NodeRevision[]>();
-        for (const revision of hierarchy.revisions) {
-            if (!revisionsByNode.has(revision.className)) {
-                revisionsByNode.set(revision.className, []);
-            }
-            revisionsByNode.get(revision.className)!.push(revision);
-        }
-
-        // Add related packages (child for downstream, parent for upstream)
-        const relatedPackages =
-            this.currentDirection === "upstream"
-                ? this.getParentPackages(packageName, packageHierarchy)
-                : packageHierarchy.get(packageName) || [];
-
-        for (const relatedPkg of relatedPackages) {
-            // If filter is active, only add related package if it has visible children
-            if (
-                this.showOnlyWithOverrides &&
-                this.countVisibleChildrenForPackage(
-                    relatedPkg,
-                    nodesByPackage,
-                    packageHierarchy,
-                    revisionsByNode,
-                ) === 0
-            ) {
-                continue;
-            }
-
-            const relatedNodes = nodesByPackage.get(relatedPkg) || [];
-            const relatedItem = new HierarchyTreeItem(
-                relatedPkg,
-                (
-                    this.currentDirection === "upstream"
-                        ? this.getParentPackages(relatedPkg, packageHierarchy)
-                              .length > 0
-                        : (packageHierarchy.get(relatedPkg) || []).length > 0
-                )
-                    ? vscode.TreeItemCollapsibleState.Collapsed
-                    : vscode.TreeItemCollapsibleState.Collapsed,
-                {
-                    type: "package",
-                    packageName: relatedPkg,
-                    packageNodes: relatedNodes,
-                    hierarchy: hierarchy,
-                    packageHierarchy: packageHierarchy,
-                    nodesByPackage: nodesByPackage,
-                },
-            );
-            relatedItem.description = `${relatedNodes.length} class${relatedNodes.length > 1 ? "es" : ""}`;
-            items.push(relatedItem);
-        }
-
-        // Create items for each class in this package
-        for (const nodeClass of nodes) {
-            const revisions = revisionsByNode.get(nodeClass.name) || [];
-
-            // Filter: skip nodes without overrides if filter is enabled
-            if (this.showOnlyWithOverrides && revisions.length === 0) {
-                continue;
-            }
-
-            const revisionLabel =
-                revisions.length > 0
-                    ? `${nodeClass.name} (revised)`
-                    : nodeClass.name;
-
-            const chainItem = new HierarchyTreeItem(
-                revisionLabel,
-                revisions.length > 0
-                    ? vscode.TreeItemCollapsibleState.Collapsed
-                    : vscode.TreeItemCollapsibleState.None,
-                {
-                    type: "node",
-                    nodeClass: nodeClass,
-                    hierarchy: hierarchy,
-                },
-            );
-
-            // Create a unique ID for this tree item and store its context
-            const itemId = `${nodeClass.name}_${hierarchy.property.name}_${Date.now()}_${Math.random()}`;
-            chainItem.treeItemId = itemId;
-            treeItemContextRegistry.set(itemId, {
-                nodeClass: nodeClass,
-                hierarchy: hierarchy,
-            });
-
-            chainItem.description = `${nodeClass.type}`;
-            chainItem.tooltip = nodeClass.sourcePath;
-
-            // Set command to open the source file when clicking on the node
-            chainItem.command = {
-                title: "Open File",
-                command: "vscode.open",
-                arguments: [
-                    vscode.Uri.file(nodeClass.sourcePath),
-                    {
-                        selection: new vscode.Range(
-                            nodeClass.lineNumber - 1,
-                            0,
-                            nodeClass.lineNumber - 1,
-                            0,
-                        ),
-                    },
-                ],
-            };
-
-            items.push(chainItem);
-
-            // Add revision details if any
-            if (revisions.length > 0) {
-                for (const revision of revisions) {
-                    const revisionItem = new HierarchyTreeItem(
-                        revision.decoratorType,
-                        vscode.TreeItemCollapsibleState.None,
-                        {
-                            type: "revision",
-                            nodeClass: nodeClass,
-                            hierarchy: hierarchy,
-                        },
-                    );
-
-                    // Create a unique ID for this revision and store its context
-                    const revisionId = `${nodeClass.name}_${hierarchy.property.name}_revision_${Date.now()}_${Math.random()}`;
-                    revisionItem.treeItemId = revisionId;
-                    treeItemContextRegistry.set(revisionId, {
-                        nodeClass: nodeClass,
-                        hierarchy: hierarchy,
-                    });
-
-                    revisionItem.description = `line ${revision.lineNumber}`;
-                    revisionItem.tooltip = `${revision.decoratorType} - Params: ${JSON.stringify(revision.decoratorParams)}`;
-                    revisionItem.command = {
-                        title: "Open File",
-                        command: "vscode.open",
-                        arguments: [
-                            vscode.Uri.file(revision.sourcePath),
-                            {
-                                selection: new vscode.Range(
-                                    revision.lineNumber - 1,
-                                    0,
-                                    revision.lineNumber - 1,
-                                    0,
-                                ),
-                            },
-                        ],
-                    };
-                    items.push(revisionItem);
-                }
-            }
-        }
-
-        return items;
+        return this.getHierarchyRoots(
+            visibleHierarchyNodes,
+            visibleNodesByName,
+        ).map((rootNode) =>
+            this.createHierarchyNodeItem(
+                rootNode,
+                hierarchy,
+                revisionsByNode,
+                visibleNodesByName,
+            ),
+        );
     }
 
     /**

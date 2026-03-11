@@ -84,7 +84,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (parser.getNodes().length === 0) {
                     await parser.parseWorkspace();
                 }
-                await searchInput.showSearchDialog("upstream");
+                await searchInput.showSearchDialog();
             } catch (error) {
                 vscode.window.showErrorMessage(
                     `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -101,7 +101,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 if (parser.getNodes().length === 0) {
                     await parser.parseWorkspace();
                 }
-                await searchInput.showSearchDialog("downstream");
+                await searchInput.showSearchDialog();
             } catch (error) {
                 vscode.window.showErrorMessage(
                     `Error: ${error instanceof Error ? error.message : "Unknown error"}`,
