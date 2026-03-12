@@ -899,10 +899,24 @@ export class XtremNodeParser {
 
     /**
      * Get all extension nodes for a given node (supports multiple packages)
-     * e.g. for "Item" returns all nodes named "ItemExtension" across packages
+     * e.g. for "Item" returns all nodes named "ItemExtension" across packages.
+     * Extensions are sorted alphabetically by package name; extensions without
+     * a package name are placed at the end.
      */
     getNodeExtensions(nodeName: string): NodeClass[] {
-        return this.extensionCache.get(nodeName) ?? [];
+        const extensions = this.extensionCache.get(nodeName) ?? [];
+        return [...extensions].sort((a, b) => {
+            if (a.packageName && b.packageName) {
+                return a.packageName.localeCompare(b.packageName);
+            }
+            if (a.packageName) {
+                return -1;
+            }
+            if (b.packageName) {
+                return 1;
+            }
+            return 0;
+        });
     }
 
     /**
