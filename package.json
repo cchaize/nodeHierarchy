@@ -95,6 +95,16 @@
                 "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
                 "title": "Switch to Flat View",
                 "icon": "$(list-flat)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageFilter",
+                "title": "Filter: Show Current Package Branch",
+                "icon": "$(filter)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
+                "title": "Filter: Show All Packages",
+                "icon": "$(filter-filled)"
             }
         ],
         "menus": {
@@ -142,6 +152,16 @@
                 {
                     "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
                     "when": "view == packagesHierarchyView && xtremPackages.viewMode == tree",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageFilter",
+                    "when": "view == packagesHierarchyView && !xtremPackages.filterActive",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
+                    "when": "view == packagesHierarchyView && xtremPackages.filterActive",
                     "group": "navigation"
                 }
             ],

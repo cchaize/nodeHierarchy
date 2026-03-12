@@ -74,6 +74,13 @@ export async function activate(context: vscode.ExtensionContext) {
         "flat",
     );
 
+    // Initialize the packages filter context
+    await vscode.commands.executeCommand(
+        "setContext",
+        "xtremPackages.filterActive",
+        false,
+    );
+
     // Register search command
     const searchCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.search",
@@ -503,6 +510,30 @@ export async function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(togglePackageViewToFlatCommand);
 
+    // Helper to toggle the package filter (shared by both active/inactive commands)
+    const togglePackageFilterAndSync = async (): Promise<void> => {
+        const isActive = packageProvider.togglePackageFilter();
+        await vscode.commands.executeCommand(
+            "setContext",
+            "xtremPackages.filterActive",
+            isActive,
+        );
+        const label = isActive ? "Filter active: showing current package branch" : "Filter disabled: showing all packages";
+        vscode.window.showInformationMessage(label);
+    };
+
+    const togglePackageFilterCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageFilter",
+        togglePackageFilterAndSync,
+    );
+    context.subscriptions.push(togglePackageFilterCommand);
+
+    const togglePackageFilterActiveCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageFilterActive",
+        togglePackageFilterAndSync,
+    );
+    context.subscriptions.push(togglePackageFilterActiveCommand);
+
     // Sync packages tree view focus with the active editor
     const syncPackagesFocus = async (
         editor: vscode.TextEditor | undefined,
@@ -512,6 +543,11 @@ export async function activate(context: vscode.ExtensionContext) {
         }
         const filePath = editor.document.uri.fsPath;
         const pkg = packageProvider.findPackageForFile(filePath);
+
+        // Always update the filtered package name so the filter reflects the
+        // current editor (tree refreshes only when filter is active)
+        packageProvider.setFilteredPackage(pkg?.name ?? null);
+
         if (!pkg) {
             return;
         }
