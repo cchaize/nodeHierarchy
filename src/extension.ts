@@ -8,12 +8,15 @@ import {
 } from "./hierarchyProvider";
 import { HierarchySearchInput } from "./searchInput";
 import { PropertyDetailView } from "./propertyDetailView";
+import { PackageHierarchyProvider, PackageTreeItem } from "./packageHierarchyProvider";
 
 let parser: XtremNodeParser;
 let provider: HierarchyTreeDataProvider;
 let searchInput: HierarchySearchInput;
 let propertyDetailView: PropertyDetailView;
 let outputChannel: vscode.OutputChannel;
+let packageProvider: PackageHierarchyProvider;
+let packageTreeView: vscode.TreeView<PackageTreeItem>;
 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
@@ -30,6 +33,9 @@ export async function activate(context: vscode.ExtensionContext) {
     searchInput = new HierarchySearchInput(parser, provider);
     propertyDetailView = new PropertyDetailView(parser, outputChannel);
 
+    // Initialize the packages hierarchy provider
+    packageProvider = new PackageHierarchyProvider(outputChannel);
+
     context.subscriptions.push(outputChannel);
 
     // Register the tree view
@@ -38,6 +44,14 @@ export async function activate(context: vscode.ExtensionContext) {
     });
 
     context.subscriptions.push(treeView);
+
+    // Register the packages hierarchy tree view
+    packageTreeView = vscode.window.createTreeView("packagesHierarchyView", {
+        treeDataProvider: packageProvider,
+        showCollapseAll: true,
+    });
+
+    context.subscriptions.push(packageTreeView);
 
     // Initialize the filter context
     await vscode.commands.executeCommand(
@@ -51,6 +65,13 @@ export async function activate(context: vscode.ExtensionContext) {
         "setContext",
         "xtremNodesHierarchy.currentDirection",
         "upstream",
+    );
+
+    // Initialize the packages view mode context
+    await vscode.commands.executeCommand(
+        "setContext",
+        "xtremPackages.viewMode",
+        "flat",
     );
 
     // Register search command
@@ -437,6 +458,95 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(toggleToUpstreamCommand);
     context.subscriptions.push(showPropertyDetailCommand);
 
+    // Register refresh packages command
+    const refreshPackagesCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.refreshPackages",
+        async () => {
+            try {
+                outputChannel.appendLine("Refreshing packages hierarchy...");
+                await packageProvider.refresh();
+                outputChannel.appendLine("Packages hierarchy refreshed");
+            } catch (error) {
+                vscode.window.showErrorMessage(
+                    `Refresh packages failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+                );
+            }
+        },
+    );
+    context.subscriptions.push(refreshPackagesCommand);
+
+    // Helper to handle both toggle commands (they share the same logic)
+    const togglePackageViewModeAndSync = async (): Promise<void> => {
+        const newMode = packageProvider.toggleViewMode();
+        await vscode.commands.executeCommand(
+            "setContext",
+            "xtremPackages.viewMode",
+            newMode,
+        );
+        const label = newMode === "tree" ? "Tree View" : "Flat View";
+        vscode.window.showInformationMessage(
+            `Packages hierarchy: switched to ${label}`,
+        );
+        // Re-sync focus after mode change so the current file stays highlighted
+        await syncPackagesFocus(vscode.window.activeTextEditor);
+    };
+
+    const togglePackageViewToTreeCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageViewToTree",
+        togglePackageViewModeAndSync,
+    );
+    context.subscriptions.push(togglePackageViewToTreeCommand);
+
+    const togglePackageViewToFlatCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageViewToFlat",
+        togglePackageViewModeAndSync,
+    );
+    context.subscriptions.push(togglePackageViewToFlatCommand);
+
+    // Sync packages tree view focus with the active editor
+    const syncPackagesFocus = async (
+        editor: vscode.TextEditor | undefined,
+    ): Promise<void> => {
+        if (!editor || !packageTreeView.visible) {
+            return;
+        }
+        const filePath = editor.document.uri.fsPath;
+        const pkg = packageProvider.findPackageForFile(filePath);
+        if (!pkg) {
+            return;
+        }
+        // Build (or find) the tree item for this package and reveal it
+        const item = packageProvider.findItemForPackage(pkg.name);
+        if (item) {
+            try {
+                await packageTreeView.reveal(item, {
+                    select: true,
+                    focus: false,
+                    expand: false,
+                });
+            } catch (err) {
+                outputChannel.appendLine(
+                    `[PackageHierarchy] Could not reveal package "${pkg.name}": ${err}`,
+                );
+            }
+        }
+    };
+
+    const editorChangeListener = vscode.window.onDidChangeActiveTextEditor(
+        syncPackagesFocus,
+    );
+    context.subscriptions.push(editorChangeListener);
+
+    // Re-sync focus whenever the packages panel becomes visible
+    const visibilityListener = packageTreeView.onDidChangeVisibility(
+        async (e) => {
+            if (e.visible) {
+                await syncPackagesFocus(vscode.window.activeTextEditor);
+            }
+        },
+    );
+    context.subscriptions.push(visibilityListener);
+
     // Parse the workspace on activation
     try {
         outputChannel.appendLine("Parsing workspace for Xtrem nodes...");
@@ -446,6 +556,14 @@ export async function activate(context: vscode.ExtensionContext) {
         );
     } catch (error) {
         outputChannel.appendLine(`Error parsing workspace: ${error}`);
+    }
+
+    // Load packages hierarchy on activation
+    try {
+        outputChannel.appendLine("Loading packages hierarchy...");
+        await packageProvider.refresh();
+    } catch (error) {
+        outputChannel.appendLine(`Error loading packages hierarchy: ${error}`);
     }
 }
 

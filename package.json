@@ -10,7 +10,8 @@
         "Other"
     ],
     "activationEvents": [
-        "onView:nodesHierarchyView"
+        "onView:nodesHierarchyView",
+        "onView:packagesHierarchyView"
     ],
     "main": "./dist/extension.js",
     "contributes": {
@@ -21,6 +22,12 @@
                     "name": "Xtrem Nodes Hierarchy",
                     "icon": "media/icon.svg",
                     "contextualTitle": "Xtrem Nodes Hierarchy Explorer"
+                },
+                {
+                    "id": "packagesHierarchyView",
+                    "name": "Xtrem Packages Hierarchy",
+                    "icon": "media/icon.svg",
+                    "contextualTitle": "Xtrem Packages Hierarchy Explorer"
                 }
             ]
         },
@@ -73,6 +80,21 @@
                 "command": "xtrem-nodes-hierarchy.showPropertyDetail",
                 "title": "Show Property Declaration",
                 "icon": "$(eye)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.refreshPackages",
+                "title": "Refresh Packages",
+                "icon": "$(refresh)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageViewToTree",
+                "title": "Switch to Tree View",
+                "icon": "$(list-tree)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
+                "title": "Switch to Flat View",
+                "icon": "$(list-flat)"
             }
         ],
         "menus": {
@@ -105,6 +127,21 @@
                 {
                     "command": "xtrem-nodes-hierarchy.toggleToUpstream",
                     "when": "view == nodesHierarchyView && xtremNodesHierarchy.currentDirection == downstream",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.refreshPackages",
+                    "when": "view == packagesHierarchyView",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageViewToTree",
+                    "when": "view == packagesHierarchyView && xtremPackages.viewMode == flat",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
+                    "when": "view == packagesHierarchyView && xtremPackages.viewMode == tree",
                     "group": "navigation"
                 }
             ],
