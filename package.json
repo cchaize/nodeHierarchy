@@ -60,7 +60,10 @@
             {
                 "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverridesActive",
                 "title": "Show All Nodes",
-                "icon": "$(filter-filled)"
+                "icon": {
+                    "light": "media/filter-active.svg",
+                    "dark": "media/filter-active.svg"
+                }
             },
             {
                 "command": "xtrem-nodes-hierarchy.searchFromEditor",
@@ -104,7 +107,10 @@
             {
                 "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
                 "title": "Filter: Show All Packages",
-                "icon": "$(filter-filled)"
+                "icon": {
+                    "light": "media/filter-active.svg",
+                    "dark": "media/filter-active.svg"
+                }
             }
         ],
         "menus": {
