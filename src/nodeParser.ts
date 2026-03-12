@@ -1052,16 +1052,20 @@ export class XtremNodeParser {
     ): void {
         for (const [, node] of this.nodeCache) {
             if (node.extends === parentNode.name) {
-                // Extension nodes (e.g. subNodeExtension4) are displayed via the
-                // extensionCache / getNodeExtensions path in the hierarchy provider.
-                // Including them here too would cause them to appear twice.
-                if (node.type === "extension") {
-                    continue;
-                }
                 const prop = node.properties.get(propertyName);
                 if (prop) {
                     revisions.push(prop);
                 }
+
+                // Extension nodes (e.g. subNodeExtension4) are displayed via the
+                // extensionCache / getNodeExtensions path in the hierarchy provider.
+                // Do not add them to chain to avoid them appearing twice in the
+                // tree. Their property revisions are still collected above so
+                // properties that only exist in an extension are found correctly.
+                if (node.type === "extension") {
+                    continue;
+                }
+
                 chain.push(node);
                 this.findSubclassesRecursive(
                     node,
