@@ -505,7 +505,7 @@ export async function activate(context: vscode.ExtensionContext) {
     const syncPackagesFocus = async (
         editor: vscode.TextEditor | undefined,
     ): Promise<void> => {
-        if (!editor) {
+        if (!editor || !packageTreeView.visible) {
             return;
         }
         const filePath = editor.document.uri.fsPath;
@@ -513,9 +513,8 @@ export async function activate(context: vscode.ExtensionContext) {
         if (!pkg) {
             return;
         }
-        // Find the matching root-level tree item and reveal it
-        const rootItems = packageProvider.getRootItems();
-        const item = rootItems.find((i) => i.packageInfo.name === pkg.name);
+        // Build (or find) the tree item for this package and reveal it
+        const item = packageProvider.findItemForPackage(pkg.name);
         if (item) {
             try {
                 await packageTreeView.reveal(item, {

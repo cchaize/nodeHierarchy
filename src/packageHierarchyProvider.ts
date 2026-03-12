@@ -23,8 +23,12 @@ export class PackageTreeItem extends vscode.TreeItem {
         collapsibleState: vscode.TreeItemCollapsibleState,
         /** true when this item represents a dependency (child node) */
         public readonly isDependency: boolean = false,
+        /** Parent item in the tree (undefined for root items) */
+        public readonly parent: PackageTreeItem | undefined = undefined,
     ) {
         super(packageInfo.name, collapsibleState);
+        // Stable, path-based ID so VS Code can match items across getChildren() calls
+        this.id = parent ? `${parent.id}/${packageInfo.name}` : packageInfo.name;
         this.tooltip = packageInfo.packagePath;
         this.description = isDependency ? "workspace:*" : undefined;
         this.iconPath = new vscode.ThemeIcon(
@@ -115,13 +119,17 @@ export class PackageHierarchyProvider
                 this.viewMode === "tree"
                     ? this.computeTreeRoots()
                     : this.rootPackages;
-            return roots.map((pkg) => this.createTreeItem(pkg, false));
+            return this.sortPackages(roots).map((pkg) =>
+                this.createTreeItem(pkg, false, undefined),
+            );
         }
 
         if (this.viewMode === "tree") {
             // Tree mode children: packages that depend on this one (reverse deps)
             const dependents = this.reverseDepsMap.get(element.packageInfo.name) ?? [];
-            return dependents.map((pkg) => this.createTreeItem(pkg, true));
+            return this.sortPackages(dependents).map((pkg) =>
+                this.createTreeItem(pkg, true, element),
+            );
         }
 
         // Flat mode children: workspace:* dependencies of this package
@@ -129,12 +137,13 @@ export class PackageHierarchyProvider
             .map((depName) => this.packageMap.get(depName))
             .filter((p): p is PackageInfo => p !== undefined);
 
-        return deps.map((pkg) => this.createTreeItem(pkg, true));
+        return this.sortPackages(deps).map((pkg) =>
+            this.createTreeItem(pkg, true, element),
+        );
     }
 
-    getParent(_element: PackageTreeItem): undefined {
-        // Parent tracking is not needed – reveal() works by searching from root items.
-        return undefined;
+    getParent(element: PackageTreeItem): PackageTreeItem | undefined {
+        return element.parent;
     }
 
     // -------------------------------------------------------------------------
@@ -190,7 +199,9 @@ export class PackageHierarchyProvider
             this.viewMode === "tree"
                 ? this.computeTreeRoots()
                 : this.rootPackages;
-        return roots.map((pkg) => this.createTreeItem(pkg, false));
+        return this.sortPackages(roots).map((pkg) =>
+            this.createTreeItem(pkg, false, undefined),
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -210,6 +221,7 @@ export class PackageHierarchyProvider
     private createTreeItem(
         pkg: PackageInfo,
         isDependency: boolean,
+        parent: PackageTreeItem | undefined,
     ): PackageTreeItem {
         const hasChildren =
             this.viewMode === "tree"
@@ -218,7 +230,107 @@ export class PackageHierarchyProvider
         const collapsible = hasChildren
             ? vscode.TreeItemCollapsibleState.Collapsed
             : vscode.TreeItemCollapsibleState.None;
-        return new PackageTreeItem(pkg, collapsible, isDependency);
+        return new PackageTreeItem(pkg, collapsible, isDependency, parent);
+    }
+
+    /** Sort a list of PackageInfo items by name (locale-aware, ascending). */
+    private sortPackages(packages: PackageInfo[]): PackageInfo[] {
+        return [...packages].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Find (or build) a PackageTreeItem for the given package name.
+     *
+     * In flat mode every package is a root item, so a simple root-level item
+     * is returned.
+     *
+     * In tree mode the package may be nested.  The method walks up the package's
+     * workspace deps to find a path from a tree root to the target package and
+     * returns the leaf item with fully linked `parent` references so that
+     * `TreeView.reveal()` can navigate the full path.
+     */
+    findItemForPackage(pkgName: string): PackageTreeItem | undefined {
+        const pkg = this.packageMap.get(pkgName);
+        if (!pkg) {
+            return undefined;
+        }
+
+        if (this.viewMode === "flat") {
+            const rootPkg = this.rootPackages.find((p) => p.name === pkgName);
+            return rootPkg
+                ? this.createTreeItem(rootPkg, false, undefined)
+                : undefined;
+        }
+
+        // Tree mode: build item chain from a root ancestor down to the target
+        const chain = this.buildPathToRoot(pkgName, new Set());
+        if (!chain) {
+            return undefined;
+        }
+
+        let parentItem: PackageTreeItem | undefined = undefined;
+        let targetItem: PackageTreeItem | undefined = undefined;
+        for (const chainPkg of chain) {
+            const item = this.createTreeItem(
+                chainPkg,
+                parentItem !== undefined,
+                parentItem,
+            );
+            parentItem = item;
+            if (chainPkg.name === pkgName) {
+                targetItem = item;
+            }
+        }
+        return targetItem;
+    }
+
+    /**
+     * Recursively build the path [root, …, target] from a tree-mode root to
+     * the package identified by `pkgName`.
+     *
+     * The parent is chosen as the alphabetically first workspace dep that is
+     * itself a workspace package (consistent with the sorted display order).
+     *
+     * Returns `[pkg]` if the package is already a root (no workspace deps).
+     * Returns `undefined` if `pkgName` is not in the package map.
+     * The `visited` set guards against cycles in malformed workspaces.
+     */
+    private buildPathToRoot(
+        pkgName: string,
+        visited: Set<string>,
+    ): PackageInfo[] | undefined {
+        const pkg = this.packageMap.get(pkgName);
+        if (!pkg) {
+            return undefined;
+        }
+
+        // No workspace deps → this is a tree-mode root
+        if (pkg.workspaceDeps.length === 0) {
+            return [pkg];
+        }
+
+        // Find the alphabetically first dep that exists in the package map
+        const sortedDeps = [...pkg.workspaceDeps]
+            .filter((d) => this.packageMap.has(d))
+            .sort((a, b) => a.localeCompare(b));
+
+        if (sortedDeps.length === 0) {
+            // No known workspace deps → treat as root
+            return [pkg];
+        }
+
+        const parentName = sortedDeps[0];
+        if (visited.has(parentName)) {
+            // Cycle detected – treat current node as root to avoid infinite loop
+            return [pkg];
+        }
+
+        visited.add(parentName);
+        const parentPath = this.buildPathToRoot(parentName, visited);
+        if (!parentPath) {
+            return [pkg];
+        }
+        return [...parentPath, pkg];
     }
 
     /**
