@@ -275,7 +275,13 @@ export async function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
-                // If the class is an extension, start the search from the parent node
+                // If the class is an extension (e.g. @decorators.nodeExtension,
+                // @decorators.subNodeExtension4, …), redirect the search to start
+                // from its Xtrem parent node instead.  Extension classes augment a
+                // parent node rather than sitting in the inheritance chain, so any
+                // property search must be rooted at that parent to correctly trace
+                // the full hierarchy — including properties that are not defined on
+                // the parent itself but only overridden in another subnode/extension.
                 const nodeClass = parser.getNode(className);
                 if (nodeClass?.type === "extension" && nodeClass.extends) {
                     className = nodeClass.extends;
