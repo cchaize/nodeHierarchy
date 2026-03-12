@@ -275,6 +275,12 @@ export async function activate(context: vscode.ExtensionContext) {
                     return;
                 }
 
+                // If the class is an extension, start the search from the parent node
+                const nodeClass = parser.getNode(className);
+                if (nodeClass?.type === "extension" && nodeClass.extends) {
+                    className = nodeClass.extends;
+                }
+
                 // Determine direction based on override
                 const direction = hasOverride ? "upstream" : "downstream";
 
