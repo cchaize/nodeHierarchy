@@ -48,6 +48,11 @@ export class PackageTreeItem extends vscode.TreeItem {
  * Reads the workspace root package.json for the `workspaces` property,
  * traverses the listed paths to discover sub-packages, and builds a tree
  * based on `workspace:*` dependencies between them.
+ *
+ * Supports two view modes:
+ *   "flat" – every workspace package appears at the root level (default)
+ *   "tree" – only true root packages (those not depended on by any other
+ *             workspace package) appear at the top; each package appears once
  */
 export class PackageHierarchyProvider
     implements vscode.TreeDataProvider<PackageTreeItem>
@@ -61,6 +66,9 @@ export class PackageHierarchyProvider
     private packageMap: Map<string, PackageInfo> = new Map();
     /** Root packages (top-level entries from the workspaces glob) */
     private rootPackages: PackageInfo[] = [];
+
+    /** Current display mode */
+    private viewMode: "flat" | "tree" = "flat";
 
     private workspaceRoot: string;
     private outputChannel: vscode.OutputChannel | undefined;
@@ -85,10 +93,12 @@ export class PackageHierarchyProvider
 
     getChildren(element?: PackageTreeItem): vscode.ProviderResult<PackageTreeItem[]> {
         if (!element) {
-            // Root level: packages from workspace root
-            return this.rootPackages.map((pkg) =>
-                this.createTreeItem(pkg, false),
-            );
+            // Root level: depends on view mode
+            const roots =
+                this.viewMode === "tree"
+                    ? this.computeTreeRoots()
+                    : this.rootPackages;
+            return roots.map((pkg) => this.createTreeItem(pkg, false));
         }
 
         // Children: workspace:* dependencies of this package
@@ -115,6 +125,21 @@ export class PackageHierarchyProvider
     }
 
     /**
+     * Toggle between "flat" and "tree" view modes.
+     * Returns the new mode.
+     */
+    toggleViewMode(): "flat" | "tree" {
+        this.viewMode = this.viewMode === "flat" ? "tree" : "flat";
+        this._onDidChangeTreeData.fire();
+        return this.viewMode;
+    }
+
+    /** Current view mode */
+    getViewMode(): "flat" | "tree" {
+        return this.viewMode;
+    }
+
+    /**
      * Return the PackageInfo whose directory contains the given file path,
      * or undefined if no match is found.
      */
@@ -138,12 +163,35 @@ export class PackageHierarchyProvider
 
     /** Get all root-level PackageTreeItems (used for reveal) */
     getRootItems(): PackageTreeItem[] {
-        return this.rootPackages.map((pkg) => this.createTreeItem(pkg, false));
+        const roots =
+            this.viewMode === "tree"
+                ? this.computeTreeRoots()
+                : this.rootPackages;
+        return roots.map((pkg) => this.createTreeItem(pkg, false));
     }
 
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * In "tree" mode, compute the packages that should appear at the root
+     * level: those that no other workspace package depends on (via workspace:*).
+     */
+    private computeTreeRoots(): PackageInfo[] {
+        // Build the set of package names that are workspace:* deps of at least
+        // one other workspace package.
+        const depNames = new Set<string>();
+        for (const pkg of this.packageMap.values()) {
+            for (const dep of pkg.workspaceDeps) {
+                depNames.add(dep);
+            }
+        }
+
+        // Root packages in tree mode = all workspace packages NOT in depNames,
+        // limited to the packages discovered from the workspaces globs.
+        return this.rootPackages.filter((pkg) => !depNames.has(pkg.name));
+    }
 
     private createTreeItem(
         pkg: PackageInfo,

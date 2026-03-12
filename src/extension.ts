@@ -67,6 +67,13 @@ export async function activate(context: vscode.ExtensionContext) {
         "upstream",
     );
 
+    // Initialize the packages view mode context
+    await vscode.commands.executeCommand(
+        "setContext",
+        "xtremPackages.viewMode",
+        "flat",
+    );
+
     // Register search command
     const searchCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.search",
@@ -467,6 +474,32 @@ export async function activate(context: vscode.ExtensionContext) {
         },
     );
     context.subscriptions.push(refreshPackagesCommand);
+
+    // Helper to handle both toggle commands (they share the same logic)
+    const togglePackageViewMode = async (): Promise<void> => {
+        const newMode = packageProvider.toggleViewMode();
+        await vscode.commands.executeCommand(
+            "setContext",
+            "xtremPackages.viewMode",
+            newMode,
+        );
+        const label = newMode === "tree" ? "Tree View" : "Flat View";
+        vscode.window.showInformationMessage(
+            `Packages hierarchy: switched to ${label}`,
+        );
+    };
+
+    const togglePackageViewToTreeCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageViewToTree",
+        togglePackageViewMode,
+    );
+    context.subscriptions.push(togglePackageViewToTreeCommand);
+
+    const togglePackageViewToFlatCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.togglePackageViewToFlat",
+        togglePackageViewMode,
+    );
+    context.subscriptions.push(togglePackageViewToFlatCommand);
 
     // Sync packages tree view focus with the active editor
     const syncPackagesFocus = async (
