@@ -476,7 +476,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(refreshPackagesCommand);
 
     // Helper to handle both toggle commands (they share the same logic)
-    const togglePackageViewMode = async (): Promise<void> => {
+    const togglePackageViewModeAndSync = async (): Promise<void> => {
         const newMode = packageProvider.toggleViewMode();
         await vscode.commands.executeCommand(
             "setContext",
@@ -487,17 +487,19 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
             `Packages hierarchy: switched to ${label}`,
         );
+        // Re-sync focus after mode change so the current file stays highlighted
+        await syncPackagesFocus(vscode.window.activeTextEditor);
     };
 
     const togglePackageViewToTreeCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.togglePackageViewToTree",
-        togglePackageViewMode,
+        togglePackageViewModeAndSync,
     );
     context.subscriptions.push(togglePackageViewToTreeCommand);
 
     const togglePackageViewToFlatCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.togglePackageViewToFlat",
-        togglePackageViewMode,
+        togglePackageViewModeAndSync,
     );
     context.subscriptions.push(togglePackageViewToFlatCommand);
 
@@ -534,6 +536,16 @@ export async function activate(context: vscode.ExtensionContext) {
         syncPackagesFocus,
     );
     context.subscriptions.push(editorChangeListener);
+
+    // Re-sync focus whenever the packages panel becomes visible
+    const visibilityListener = packageTreeView.onDidChangeVisibility(
+        async (e) => {
+            if (e.visible) {
+                await syncPackagesFocus(vscode.window.activeTextEditor);
+            }
+        },
+    );
+    context.subscriptions.push(visibilityListener);
 
     // Parse the workspace on activation
     try {
