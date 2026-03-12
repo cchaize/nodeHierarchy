@@ -233,7 +233,20 @@ export class XtremNodeParser {
                         const nodeType = this.getNodeDecoratorType(decorator);
                         if (nodeType) {
                             // Found a node class!
-                            const extendedClass = this.getExtendedClass(node);
+                            let extendedClass = this.getExtendedClass(node);
+                            // For extension types, prefer the Xtrem parent declared in the
+                            // decorator's `extends` parameter (e.g. subNodeExtension4 passes
+                            // the real parent via `extends: () => pkg.nodes.ParentNode` while
+                            // the TypeScript `extends` clause only refers to a generic base class).
+                            if (nodeType === "extension") {
+                                const decoratorParent =
+                                    this.getExtendedClassFromDecorator(
+                                        decorator,
+                                    );
+                                if (decoratorParent) {
+                                    extendedClass = decoratorParent;
+                                }
+                            }
                             const lineNumber =
                                 sourceFile.getLineAndCharacterOfPosition(
                                     node.getStart(),
@@ -258,12 +271,22 @@ export class XtremNodeParser {
                             // Also register extensions in extensionCache. Multiple extensions with the
                             // same base name (e.g. "ItemExtension") can exist across different packages,
                             // so we store them in an array keyed by the base node name.
-                            if (nodeType === "extension" && className.endsWith("Extension")) {
-                                const baseName = className.slice(0, -"Extension".length);
-                                if (!this.extensionCache.has(baseName)) {
-                                    this.extensionCache.set(baseName, []);
+                            if (nodeType === "extension") {
+                                // Prefer the resolved extendedClass (may come from decorator param)
+                                // as the cache key; fall back to stripping the "Extension" suffix.
+                                let baseName = extendedClass;
+                                if (!baseName && className.endsWith("Extension")) {
+                                    baseName = className.slice(
+                                        0,
+                                        -"Extension".length,
+                                    );
                                 }
-                                this.extensionCache.get(baseName)!.push(nodeClass);
+                                if (baseName) {
+                                    if (!this.extensionCache.has(baseName)) {
+                                        this.extensionCache.set(baseName, []);
+                                    }
+                                    this.extensionCache.get(baseName)!.push(nodeClass);
+                                }
                             }
                             nodeCount++;
                             this.log(
@@ -297,7 +320,15 @@ export class XtremNodeParser {
             decoratorText = expression.getText();
         }
 
-        // Check nodeExtension BEFORE node to avoid false positive (nodeExtension contains "node")
+        // Check subNodeExtension / nodeExtension BEFORE subNode / node to avoid
+        // false positives (e.g. "subNodeExtension4" contains "subNode").
+        if (
+            decoratorText.match(
+                /@?decorators\.subNodeExtension|@?subNodeExtension/i,
+            )
+        ) {
+            return "extension";
+        }
         if (
             decoratorText.match(/@?decorators\.nodeExtension|@?nodeExtension/i)
         ) {
@@ -336,6 +367,56 @@ export class XtremNodeParser {
                         // Fallback to text if we can't normalize
                         return type.expression.getText();
                     }
+                }
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Extract the Xtrem parent node name from the decorator's `extends` parameter.
+     * Used for extension decorators like @decorators.subNodeExtension4 where the
+     * TypeScript class extends a generic base (e.g. SubNodeExtension4) but the
+     * actual Xtrem parent is declared via `extends: () => pkg.nodes.ParentNode`.
+     */
+    private getExtendedClassFromDecorator(
+        decorator: ts.Decorator,
+    ): string | undefined {
+        const expression = decorator.expression;
+        if (
+            !ts.isCallExpression(expression) ||
+            expression.arguments.length === 0
+        ) {
+            return undefined;
+        }
+        const firstArg = expression.arguments[0];
+        if (!ts.isObjectLiteralExpression(firstArg)) {
+            return undefined;
+        }
+        for (const prop of firstArg.properties) {
+            if (
+                ts.isPropertyAssignment(prop) &&
+                ts.isIdentifier(prop.name) &&
+                prop.name.text === "extends"
+            ) {
+                const val = prop.initializer;
+                // Arrow function: () => pkg.nodes.ParentNode  or  () => ParentNode
+                if (ts.isArrowFunction(val)) {
+                    const body = val.body;
+                    if (ts.isPropertyAccessExpression(body)) {
+                        return body.name.text;
+                    }
+                    if (ts.isIdentifier(body)) {
+                        return body.text;
+                    }
+                }
+                // Direct property access: pkg.nodes.ParentNode
+                if (ts.isPropertyAccessExpression(val)) {
+                    return val.name.text;
+                }
+                // Identifier: ParentNode
+                if (ts.isIdentifier(val)) {
+                    return val.text;
                 }
             }
         }
@@ -547,7 +628,12 @@ export class XtremNodeParser {
 
         const allProperties = this.getAllProperties(nodeName);
         const property = allProperties.get(propertyName);
-        if (!property) {
+        // For upstream search the property must exist on the starting node or one
+        // of its ancestors; return null early if it does not.  For downstream
+        // search the property may be introduced only in a subNode/extension that
+        // is a descendant of the starting node, so we let the traversal proceed
+        // and resolve the primary property from the first revision found.
+        if (!property && direction === "upstream") {
             return null;
         }
 
@@ -641,8 +727,17 @@ export class XtremNodeParser {
             this.findSubclassesRecursive(node, propertyName, chain, revisions);
         }
 
+        // Resolve the primary property: use what getAllProperties found, or
+        // fall back to the first revision discovered during traversal (covers
+        // the downstream-only case where the property originates in a subNode
+        // or extension rather than the node we started from).
+        const resolvedProperty = property ?? revisions[0];
+        if (!resolvedProperty) {
+            return null;
+        }
+
         return {
-            property: property,
+            property: resolvedProperty,
             chain: chain,
             revisions: revisions.map((p) => ({
                 className: p.declaredIn,
@@ -804,10 +899,24 @@ export class XtremNodeParser {
 
     /**
      * Get all extension nodes for a given node (supports multiple packages)
-     * e.g. for "Item" returns all nodes named "ItemExtension" across packages
+     * e.g. for "Item" returns all nodes named "ItemExtension" across packages.
+     * Extensions are sorted alphabetically by package name; extensions without
+     * a package name are placed at the end.
      */
     getNodeExtensions(nodeName: string): NodeClass[] {
-        return this.extensionCache.get(nodeName) ?? [];
+        const extensions = this.extensionCache.get(nodeName) ?? [];
+        return [...extensions].sort((a, b) => {
+            if (a.packageName && b.packageName) {
+                return a.packageName.localeCompare(b.packageName);
+            }
+            if (a.packageName) {
+                return -1;
+            }
+            if (b.packageName) {
+                return 1;
+            }
+            return 0;
+        });
     }
 
     /**
@@ -961,6 +1070,16 @@ export class XtremNodeParser {
                 if (prop) {
                     revisions.push(prop);
                 }
+
+                // Extension nodes (e.g. subNodeExtension4) are displayed via the
+                // extensionCache / getNodeExtensions path in the hierarchy provider.
+                // Do not add them to chain to avoid them appearing twice in the
+                // tree. Their property revisions are still collected above so
+                // properties that only exist in an extension are found correctly.
+                if (node.type === "extension") {
+                    continue;
+                }
+
                 chain.push(node);
                 this.findSubclassesRecursive(
                     node,
