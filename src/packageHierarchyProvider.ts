@@ -50,9 +50,21 @@ export class PackageTreeItem extends vscode.TreeItem {
  * based on `workspace:*` dependencies between them.
  *
  * Supports two view modes:
- *   "flat" – every workspace package appears at the root level (default)
- *   "tree" – only true root packages (those not depended on by any other
- *             workspace package) appear at the top; each package appears once
+ *
+ *   "flat" – every workspace package appears at the root level.
+ *            Children show the direct `workspace:*` dependencies of each
+ *            package (i.e. what this package depends on), recursively
+ *            expandable.  A package can appear both at the root and as a
+ *            child of its dependents.
+ *            Example: P31 → P21 → P11
+ *
+ *   "tree" – bottom-up / "who uses me?" view.
+ *            Root packages are those that have no `workspace:*` dependencies
+ *            themselves (the foundational packages).  Children show which
+ *            other workspace packages depend on the parent.  A package can
+ *            appear as a child of every package it depends on.
+ *            Example: P11 → [P21 → [P31], P22]
+ *                     P12 → [P22]
  */
 export class PackageHierarchyProvider
     implements vscode.TreeDataProvider<PackageTreeItem>
@@ -66,6 +78,11 @@ export class PackageHierarchyProvider
     private packageMap: Map<string, PackageInfo> = new Map();
     /** Root packages (top-level entries from the workspaces glob) */
     private rootPackages: PackageInfo[] = [];
+    /**
+     * Reverse dependency map: for each package name, the list of workspace
+     * packages that declare it as a `workspace:*` dependency.
+     */
+    private reverseDepsMap: Map<string, PackageInfo[]> = new Map();
 
     /** Current display mode */
     private viewMode: "flat" | "tree" = "flat";
@@ -101,7 +118,13 @@ export class PackageHierarchyProvider
             return roots.map((pkg) => this.createTreeItem(pkg, false));
         }
 
-        // Children: workspace:* dependencies of this package
+        if (this.viewMode === "tree") {
+            // Tree mode children: packages that depend on this one (reverse deps)
+            const dependents = this.reverseDepsMap.get(element.packageInfo.name) ?? [];
+            return dependents.map((pkg) => this.createTreeItem(pkg, true));
+        }
+
+        // Flat mode children: workspace:* dependencies of this package
         const deps = element.packageInfo.workspaceDeps
             .map((depName) => this.packageMap.get(depName))
             .filter((p): p is PackageInfo => p !== undefined);
@@ -176,31 +199,23 @@ export class PackageHierarchyProvider
 
     /**
      * In "tree" mode, compute the packages that should appear at the root
-     * level: those that no other workspace package depends on (via workspace:*).
+     * level: those that have no `workspace:*` dependencies themselves
+     * (i.e. foundational packages that other packages depend on but which
+     * do not depend on any other workspace package).
      */
     private computeTreeRoots(): PackageInfo[] {
-        // Build the set of package names that are workspace:* deps of at least
-        // one other workspace package.
-        const depNames = new Set<string>();
-        for (const pkg of this.packageMap.values()) {
-            for (const dep of pkg.workspaceDeps) {
-                depNames.add(dep);
-            }
-        }
-
-        // Root packages in tree mode = all workspace packages NOT in depNames,
-        // limited to the packages discovered from the workspaces globs.
-        return this.rootPackages.filter((pkg) => !depNames.has(pkg.name));
+        return this.rootPackages.filter((pkg) => pkg.workspaceDeps.length === 0);
     }
 
     private createTreeItem(
         pkg: PackageInfo,
         isDependency: boolean,
     ): PackageTreeItem {
-        const hasWorkspaceDeps = pkg.workspaceDeps.some((d) =>
-            this.packageMap.has(d),
-        );
-        const collapsible = hasWorkspaceDeps
+        const hasChildren =
+            this.viewMode === "tree"
+                ? (this.reverseDepsMap.get(pkg.name)?.length ?? 0) > 0
+                : pkg.workspaceDeps.some((d) => this.packageMap.has(d));
+        const collapsible = hasChildren
             ? vscode.TreeItemCollapsibleState.Collapsed
             : vscode.TreeItemCollapsibleState.None;
         return new PackageTreeItem(pkg, collapsible, isDependency);
@@ -212,10 +227,12 @@ export class PackageHierarchyProvider
      * 2. Expand glob patterns to find package directories
      * 3. Parse each package.json
      * 4. Build packageMap and rootPackages
+     * 5. Build reverseDepsMap (who depends on each package)
      */
     private async loadPackages(): Promise<void> {
         this.packageMap.clear();
         this.rootPackages = [];
+        this.reverseDepsMap.clear();
 
         if (!this.workspaceRoot) {
             this.log("No workspace root found");
@@ -276,6 +293,20 @@ export class PackageHierarchyProvider
                 return undefined;
             })
             .filter((p): p is PackageInfo => p !== undefined);
+
+        // Step 5: build reverse dependency map
+        for (const pkg of this.packageMap.values()) {
+            for (const depName of pkg.workspaceDeps) {
+                if (this.packageMap.has(depName)) {
+                    let dependents = this.reverseDepsMap.get(depName);
+                    if (!dependents) {
+                        dependents = [];
+                        this.reverseDepsMap.set(depName, dependents);
+                    }
+                    dependents.push(pkg);
+                }
+            }
+        }
 
         this.log(
             `Loaded ${this.packageMap.size} packages, ${this.rootPackages.length} root packages`,
