@@ -91,6 +91,11 @@ export class PackageHierarchyProvider
     /** Current display mode */
     private viewMode: "flat" | "tree" = "flat";
 
+    /** Whether the package filter (current-file branch only) is active */
+    private packageFilterActive = false;
+    /** Name of the package to filter on (set from the active editor) */
+    private filteredPackageName: string | null = null;
+
     private workspaceRoot: string;
     private outputChannel: vscode.OutputChannel | undefined;
 
@@ -115,10 +120,23 @@ export class PackageHierarchyProvider
     getChildren(element?: PackageTreeItem): vscode.ProviderResult<PackageTreeItem[]> {
         if (!element) {
             // Root level: depends on view mode
-            const roots =
+            const baseRoots =
                 this.viewMode === "tree"
                     ? this.computeTreeRoots()
                     : this.rootPackages;
+
+            // Apply package filter at root level
+            const roots =
+                this.packageFilterActive && this.filteredPackageName
+                    ? this.viewMode === "flat"
+                        ? baseRoots.filter(
+                              (pkg) => pkg.name === this.filteredPackageName,
+                          )
+                        : baseRoots.filter((pkg) =>
+                              this.packageLeadsToFiltered(pkg.name, new Set()),
+                          )
+                    : baseRoots;
+
             return this.sortPackages(roots).map((pkg) =>
                 this.createTreeItem(pkg, false, undefined),
             );
@@ -126,7 +144,16 @@ export class PackageHierarchyProvider
 
         if (this.viewMode === "tree") {
             // Tree mode children: packages that depend on this one (reverse deps)
-            const dependents = this.reverseDepsMap.get(element.packageInfo.name) ?? [];
+            const allDependents = this.reverseDepsMap.get(element.packageInfo.name) ?? [];
+
+            // In tree mode with filter: only keep children on the path to the filtered package
+            const dependents =
+                this.packageFilterActive && this.filteredPackageName
+                    ? allDependents.filter((pkg) =>
+                          this.packageLeadsToFiltered(pkg.name, new Set()),
+                      )
+                    : allDependents;
+
             return this.sortPackages(dependents).map((pkg) =>
                 this.createTreeItem(pkg, true, element),
             );
@@ -169,6 +196,35 @@ export class PackageHierarchyProvider
     /** Current view mode */
     getViewMode(): "flat" | "tree" {
         return this.viewMode;
+    }
+
+    /**
+     * Toggle the package filter on/off.
+     * Returns the new state (true = active).
+     */
+    togglePackageFilter(): boolean {
+        this.packageFilterActive = !this.packageFilterActive;
+        this._onDidChangeTreeData.fire();
+        return this.packageFilterActive;
+    }
+
+    /** Whether the package filter is currently active */
+    isPackageFilterActive(): boolean {
+        return this.packageFilterActive;
+    }
+
+    /**
+     * Set the package name to filter on (derived from the active editor file).
+     * Triggers a tree refresh only when the filter is currently active.
+     */
+    setFilteredPackage(packageName: string | null): void {
+        if (this.filteredPackageName === packageName) {
+            return;
+        }
+        this.filteredPackageName = packageName;
+        if (this.packageFilterActive) {
+            this._onDidChangeTreeData.fire();
+        }
     }
 
     /**
@@ -227,15 +283,48 @@ export class PackageHierarchyProvider
             this.viewMode === "tree"
                 ? (this.reverseDepsMap.get(pkg.name)?.length ?? 0) > 0
                 : pkg.workspaceDeps.some((d) => this.packageMap.has(d));
-        const collapsible = hasChildren
-            ? vscode.TreeItemCollapsibleState.Collapsed
-            : vscode.TreeItemCollapsibleState.None;
+
+        let collapsible: vscode.TreeItemCollapsibleState;
+        if (!hasChildren) {
+            collapsible = vscode.TreeItemCollapsibleState.None;
+        } else if (
+            this.packageFilterActive &&
+            this.viewMode === "flat"
+        ) {
+            // In flat mode with filter active, fully expand the filtered branch
+            collapsible = vscode.TreeItemCollapsibleState.Expanded;
+        } else {
+            collapsible = vscode.TreeItemCollapsibleState.Collapsed;
+        }
+
         return new PackageTreeItem(pkg, collapsible, isDependency, parent);
     }
 
     /** Sort a list of PackageInfo items by name (locale-aware, ascending). */
     private sortPackages(packages: PackageInfo[]): PackageInfo[] {
         return [...packages].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * In tree mode, returns true if `pkgName` is the filtered package or has
+     * the filtered package as a descendant (i.e. can lead to the filtered
+     * package via the reverse-dependency chain).
+     */
+    private packageLeadsToFiltered(pkgName: string, visited: Set<string>): boolean {
+        if (pkgName === this.filteredPackageName) {
+            return true;
+        }
+        if (visited.has(pkgName)) {
+            return false;
+        }
+        visited.add(pkgName);
+        const dependents = this.reverseDepsMap.get(pkgName) ?? [];
+        for (const dep of dependents) {
+            if (this.packageLeadsToFiltered(dep.name, visited)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

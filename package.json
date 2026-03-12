@@ -60,7 +60,10 @@
             {
                 "command": "xtrem-nodes-hierarchy.toggleShowOnlyWithOverridesActive",
                 "title": "Show All Nodes",
-                "icon": "$(filter-filled)"
+                "icon": {
+                    "light": "media/filter-active.svg",
+                    "dark": "media/filter-active.svg"
+                }
             },
             {
                 "command": "xtrem-nodes-hierarchy.searchFromEditor",
@@ -95,6 +98,19 @@
                 "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
                 "title": "Switch to Flat View",
                 "icon": "$(list-flat)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageFilter",
+                "title": "Filter: Show Current Package Branch",
+                "icon": "$(filter)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
+                "title": "Filter: Show All Packages",
+                "icon": {
+                    "light": "media/filter-active.svg",
+                    "dark": "media/filter-active.svg"
+                }
             }
         ],
         "menus": {
@@ -142,6 +158,16 @@
                 {
                     "command": "xtrem-nodes-hierarchy.togglePackageViewToFlat",
                     "when": "view == packagesHierarchyView && xtremPackages.viewMode == tree",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageFilter",
+                    "when": "view == packagesHierarchyView && !xtremPackages.filterActive",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
+                    "when": "view == packagesHierarchyView && xtremPackages.filterActive",
                     "group": "navigation"
                 }
             ],
