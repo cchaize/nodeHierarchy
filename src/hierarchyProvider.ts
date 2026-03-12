@@ -103,8 +103,14 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         nodeClass: NodeClass,
         isDefinedInNode: boolean,
     ): vscode.ThemeIcon {
-        const iconId =
-            nodeClass.type === "subNode" ? "symbol-interface" : "symbol-class";
+        let iconId: string;
+        if (nodeClass.type === "extension") {
+            iconId = "plug";
+        } else if (nodeClass.type === "subNode") {
+            iconId = "symbol-interface";
+        } else {
+            iconId = "symbol-class";
+        }
 
         return isDefinedInNode
             ? new vscode.ThemeIcon(
@@ -262,16 +268,16 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
                 detail: "Blue: the property is inherited and unchanged in this subNode",
             },
             {
-                icon: "warning",
+                icon: "plug",
                 color: "editorError.foreground",
-                label: "Node with extension — property defined here",
-                detail: "An extension exists and may further override this property",
+                label: "Extension — property defined here",
+                detail: "Red: the property is declared or overridden in this extension",
             },
             {
-                icon: "warning",
+                icon: "plug",
                 color: "editorInfo.foreground",
-                label: "Node with extension — property inherited",
-                detail: "An extension exists and may override this property",
+                label: "Extension — property not defined",
+                detail: "Blue: the property is not defined in this extension",
             },
         ];
 
@@ -425,10 +431,13 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
         revisionsByNode: Map<string, NodeRevision[]>,
         visibleNodesByName: Map<string, NodeClass>,
     ): HierarchyTreeItem {
-        const isOverride = this.isPropertyDefinedInNode(
-            nodeClass,
-            revisionsByNode,
-        );
+        // For extension nodes, check the property directly since they are not part of
+        // the inheritance chain stored in revisionsByNode.
+        const isOverride =
+            nodeClass.type === "extension"
+                ? nodeClass.properties.has(hierarchy.property.name)
+                : this.isPropertyDefinedInNode(nodeClass, revisionsByNode);
+
         const hasChildren =
             this.getHierarchyChildNodes(
                 nodeClass,
@@ -462,27 +471,10 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             ? `${nodeClass.packageName} • ${nodeClass.type}`
             : nodeClass.type;
 
-        const extension = this.parser.getNodeExtension(nodeClass.name);
-        if (extension) {
-            const iconColor = isOverride
-                ? new vscode.ThemeColor("editorError.foreground")
-                : new vscode.ThemeColor("editorInfo.foreground");
-            nodeItem.iconPath = new vscode.ThemeIcon("warning", iconColor);
-            const tooltip = new vscode.MarkdownString("", true);
-            tooltip.supportHtml = true;
-            tooltip.appendMarkdown(
-                `**${this.formatNodeLabel(nodeClass)}**` +
-                    (nodeClass.packageName
-                        ? ` • ${nodeClass.packageName} • ${nodeClass.type}`
-                        : ` • ${nodeClass.type}`) +
-                    `\n\n<span style="color:orange;">⚠ An extension (**${extension.name}**) exists and may override this property</span>`,
-            );
-            nodeItem.tooltip = tooltip;
-        } else {
-            nodeItem.tooltip = nodeClass.packageName
-                ? `${this.formatNodeLabel(nodeClass)} • ${nodeClass.packageName} • ${nodeClass.type}`
-                : `${this.formatNodeLabel(nodeClass)} • ${nodeClass.type}`;
-        }
+        nodeItem.tooltip = nodeClass.packageName
+            ? `${this.formatNodeLabel(nodeClass)} • ${nodeClass.packageName} • ${nodeClass.type}`
+            : `${this.formatNodeLabel(nodeClass)} • ${nodeClass.type}`;
+
         const openTarget = this.getNodeOpenTarget(nodeClass, hierarchy);
         nodeItem.command = {
             title: "Open File",
@@ -522,7 +514,7 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             return parentNode ? [parentNode] : [];
         }
 
-        return visibleHierarchyNodes.filter((candidateNode) => {
+        const inheritanceChildren = visibleHierarchyNodes.filter((candidateNode) => {
             if (candidateNode.name === nodeClass.name) {
                 return false;
             }
@@ -533,6 +525,16 @@ export class HierarchyTreeDataProvider implements vscode.TreeDataProvider<Hierar
             );
             return parentNode?.name === nodeClass.name;
         });
+
+        // Prepend extension nodes for this node (extensions are not part of the
+        // inheritance chain, so they are fetched separately and shown before
+        // inheritance children).
+        const extensions = this.parser.getNodeExtensions(nodeClass.name);
+        const visibleExtensions = this.showOnlyWithOverrides
+            ? extensions.filter((ext) => ext.properties.has(hierarchy.property.name))
+            : extensions;
+
+        return [...visibleExtensions, ...inheritanceChildren];
     }
 
     private getHierarchyNodeChildren(

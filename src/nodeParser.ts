@@ -37,6 +37,8 @@ function getPackageRoot(filePath: string): string | undefined {
  */
 export class XtremNodeParser {
     private nodeCache: Map<string, NodeClass> = new Map();
+    // Maps base node name (e.g. "Item") to all its extension NodeClasses
+    private extensionCache: Map<string, NodeClass[]> = new Map();
     private workspaceFolder: string;
     private program: ts.Program | undefined;
     private checker: ts.TypeChecker | undefined;
@@ -60,6 +62,7 @@ export class XtremNodeParser {
      */
     clearCache() {
         this.nodeCache.clear();
+        this.extensionCache.clear();
         this.program = undefined;
         this.checker = undefined;
         this.packageDependencies.clear();
@@ -252,6 +255,16 @@ export class XtremNodeParser {
                             this.extractProperties(node, nodeClass, sourceFile);
 
                             this.nodeCache.set(className, nodeClass);
+                            // Also register extensions in extensionCache. Multiple extensions with the
+                            // same base name (e.g. "ItemExtension") can exist across different packages,
+                            // so we store them in an array keyed by the base node name.
+                            if (nodeType === "extension" && className.endsWith("Extension")) {
+                                const baseName = className.slice(0, -"Extension".length);
+                                if (!this.extensionCache.has(baseName)) {
+                                    this.extensionCache.set(baseName, []);
+                                }
+                                this.extensionCache.get(baseName)!.push(nodeClass);
+                            }
                             nodeCount++;
                             this.log(
                                 `Found node: ${className} with ${nodeClass.properties.size} properties (extends: ${extendedClass || "none"})`,
@@ -783,14 +796,18 @@ export class XtremNodeParser {
 
     /**
      * Get the extension node for a given node, if one exists
-     * e.g. for "Item" returns the "ItemExtension" node
+     * e.g. for "Item" returns the first "ItemExtension" node found
      */
     getNodeExtension(nodeName: string): NodeClass | undefined {
-        const extensionNode = this.nodeCache.get(`${nodeName}Extension`);
-        if (extensionNode?.type === "extension") {
-            return extensionNode;
-        }
-        return undefined;
+        return this.extensionCache.get(nodeName)?.[0];
+    }
+
+    /**
+     * Get all extension nodes for a given node (supports multiple packages)
+     * e.g. for "Item" returns all nodes named "ItemExtension" across packages
+     */
+    getNodeExtensions(nodeName: string): NodeClass[] {
+        return this.extensionCache.get(nodeName) ?? [];
     }
 
     /**
