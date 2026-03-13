@@ -10,8 +10,10 @@ export interface PackageInfo {
     name: string;
     /** Absolute path to the package directory */
     packagePath: string;
-    /** workspace:* dependencies (package names) */
-    workspaceDeps: string[];
+    /** workspace:* entries from the `dependencies` field */
+    workspaceRegularDeps: string[];
+    /** workspace:* entries from the `devDependencies` field */
+    workspaceDevDeps: string[];
 }
 
 /**
@@ -91,6 +93,9 @@ export class PackageHierarchyProvider
     /** Current display mode */
     private viewMode: "flat" | "tree" = "flat";
 
+    /** Which dependency types to include when computing workspace edges */
+    private depTypeFilter: "dependencies" | "devDependencies" | "both" = "dependencies";
+
     /** Whether the package filter (current-file branch only) is active */
     private packageFilterActive = false;
     /** Name of the package to filter on (set from the active editor) */
@@ -160,7 +165,7 @@ export class PackageHierarchyProvider
         }
 
         // Flat mode children: workspace:* dependencies of this package
-        const deps = element.packageInfo.workspaceDeps
+        const deps = this.getEffectiveDeps(element.packageInfo)
             .map((depName) => this.packageMap.get(depName))
             .filter((p): p is PackageInfo => p !== undefined);
 
@@ -196,6 +201,29 @@ export class PackageHierarchyProvider
     /** Current view mode */
     getViewMode(): "flat" | "tree" {
         return this.viewMode;
+    }
+
+    /**
+     * Cycle through dependency type filters: dependencies → devDependencies → both → …
+     * Rebuilds the reverse dependency map and fires a tree refresh.
+     * Returns the new filter value.
+     */
+    cycleDepTypeFilter(): "dependencies" | "devDependencies" | "both" {
+        if (this.depTypeFilter === "dependencies") {
+            this.depTypeFilter = "devDependencies";
+        } else if (this.depTypeFilter === "devDependencies") {
+            this.depTypeFilter = "both";
+        } else {
+            this.depTypeFilter = "dependencies";
+        }
+        this.rebuildReverseDepsMap();
+        this._onDidChangeTreeData.fire();
+        return this.depTypeFilter;
+    }
+
+    /** Current dependency type filter */
+    getDepTypeFilter(): "dependencies" | "devDependencies" | "both" {
+        return this.depTypeFilter;
     }
 
     /**
@@ -271,7 +299,7 @@ export class PackageHierarchyProvider
      * do not depend on any other workspace package).
      */
     private computeTreeRoots(): PackageInfo[] {
-        return this.rootPackages.filter((pkg) => pkg.workspaceDeps.length === 0);
+        return this.rootPackages.filter((pkg) => this.getEffectiveDeps(pkg).length === 0);
     }
 
     private createTreeItem(
@@ -282,7 +310,7 @@ export class PackageHierarchyProvider
         const hasChildren =
             this.viewMode === "tree"
                 ? (this.reverseDepsMap.get(pkg.name)?.length ?? 0) > 0
-                : pkg.workspaceDeps.some((d) => this.packageMap.has(d));
+                : this.getEffectiveDeps(pkg).some((d) => this.packageMap.has(d));
 
         let collapsible: vscode.TreeItemCollapsibleState;
         if (!hasChildren) {
@@ -303,6 +331,48 @@ export class PackageHierarchyProvider
     /** Sort a list of PackageInfo items by name (locale-aware, ascending). */
     private sortPackages(packages: PackageInfo[]): PackageInfo[] {
         return [...packages].sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    /**
+     * Return the effective workspace deps for a package based on the current
+     * `depTypeFilter`:
+     *   "dependencies"    → workspaceRegularDeps
+     *   "devDependencies" → workspaceDevDeps
+     *   "both"            → union of both lists
+     *
+     * A package appearing in both `dependencies` and `devDependencies` of the
+     * same package.json would be a malformed manifest, so deduplication is not
+     * needed in the common case and we avoid the overhead of a Set.
+     */
+    private getEffectiveDeps(pkg: PackageInfo): string[] {
+        switch (this.depTypeFilter) {
+            case "dependencies":
+                return pkg.workspaceRegularDeps;
+            case "devDependencies":
+                return pkg.workspaceDevDeps;
+            case "both":
+                return [...pkg.workspaceRegularDeps, ...pkg.workspaceDevDeps];
+        }
+    }
+
+    /**
+     * Rebuild `reverseDepsMap` from the already-loaded `packageMap` using the
+     * current `depTypeFilter`.  Called after loading and after each filter change.
+     */
+    private rebuildReverseDepsMap(): void {
+        this.reverseDepsMap.clear();
+        for (const pkg of this.packageMap.values()) {
+            for (const depName of this.getEffectiveDeps(pkg)) {
+                if (this.packageMap.has(depName)) {
+                    let dependents = this.reverseDepsMap.get(depName);
+                    if (!dependents) {
+                        dependents = [];
+                        this.reverseDepsMap.set(depName, dependents);
+                    }
+                    dependents.push(pkg);
+                }
+            }
+        }
     }
 
     /**
@@ -394,12 +464,12 @@ export class PackageHierarchyProvider
         }
 
         // No workspace deps → this is a tree-mode root
-        if (pkg.workspaceDeps.length === 0) {
+        if (this.getEffectiveDeps(pkg).length === 0) {
             return [pkg];
         }
 
         // Find the alphabetically first dep that exists in the package map
-        const sortedDeps = [...pkg.workspaceDeps]
+        const sortedDeps = [...this.getEffectiveDeps(pkg)]
             .filter((d) => this.packageMap.has(d))
             .sort((a, b) => a.localeCompare(b));
 
@@ -496,18 +566,7 @@ export class PackageHierarchyProvider
             .filter((p): p is PackageInfo => p !== undefined);
 
         // Step 5: build reverse dependency map
-        for (const pkg of this.packageMap.values()) {
-            for (const depName of pkg.workspaceDeps) {
-                if (this.packageMap.has(depName)) {
-                    let dependents = this.reverseDepsMap.get(depName);
-                    if (!dependents) {
-                        dependents = [];
-                        this.reverseDepsMap.set(depName, dependents);
-                    }
-                    dependents.push(pkg);
-                }
-            }
-        }
+        this.rebuildReverseDepsMap();
 
         this.log(
             `Loaded ${this.packageMap.size} packages, ${this.rootPackages.length} root packages`,
@@ -548,7 +607,8 @@ export class PackageHierarchyProvider
 
     /**
      * Parse a package.json file and return a PackageInfo object.
-     * Only keeps `workspace:*` entries from dependencies (and devDependencies).
+     * Collects `workspace:*` entries from `dependencies` and `devDependencies`
+     * separately so that the tree can be filtered by dependency type.
      */
     private async parsePackageJson(
         packageDir: string,
@@ -568,23 +628,25 @@ export class PackageHierarchyProvider
                 return undefined;
             }
 
-            // Collect workspace:* deps from both dependencies and devDependencies
-            const workspaceDeps: string[] = [];
-            const allDeps: Record<string, string> = {
-                ...(pkg.dependencies ?? {}),
-                ...(pkg.devDependencies ?? {}),
-            };
-
-            for (const [depName, version] of Object.entries(allDeps)) {
+            const workspaceRegularDeps: string[] = [];
+            for (const [depName, version] of Object.entries(pkg.dependencies ?? {})) {
                 if (version === "workspace:*") {
-                    workspaceDeps.push(depName);
+                    workspaceRegularDeps.push(depName);
+                }
+            }
+
+            const workspaceDevDeps: string[] = [];
+            for (const [depName, version] of Object.entries(pkg.devDependencies ?? {})) {
+                if (version === "workspace:*") {
+                    workspaceDevDeps.push(depName);
                 }
             }
 
             return {
                 name: pkg.name,
                 packagePath: packageDir,
-                workspaceDeps,
+                workspaceRegularDeps,
+                workspaceDevDeps,
             };
         } catch {
             this.log(`Could not parse package.json at ${pkgJsonPath}`);
