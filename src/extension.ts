@@ -81,6 +81,16 @@ export async function activate(context: vscode.ExtensionContext) {
         false,
     );
 
+    // Initialize the packages dependency type filter context
+    await vscode.commands.executeCommand(
+        "setContext",
+        "xtremPackages.depTypeFilter",
+        "dependencies",
+    );
+
+    // Show the initial dep-type filter label in the panel title area
+    packageTreeView.description = "dependencies only";
+
     // Register search command
     const searchCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.search",
@@ -545,6 +555,43 @@ export async function activate(context: vscode.ExtensionContext) {
         togglePackageFilterAndSync,
     );
     context.subscriptions.push(togglePackageFilterActiveCommand);
+
+    // Helper to cycle through the dependency type filter and sync the context
+    const depTypeFilterLabels: Record<string, string> = {
+        dependencies: "dependencies only",
+        devDependencies: "devDependencies only",
+        both: "both dependencies and devDependencies",
+    };
+    const cycleDepTypeFilterAndSync = async (): Promise<void> => {
+        const newFilter = packageProvider.cycleDepTypeFilter();
+        await vscode.commands.executeCommand(
+            "setContext",
+            "xtremPackages.depTypeFilter",
+            newFilter,
+        );
+        packageTreeView.description = depTypeFilterLabels[newFilter];
+        vscode.window.showInformationMessage(
+            `Packages hierarchy: showing ${depTypeFilterLabels[newFilter]}`,
+        );
+    };
+
+    const depTypeFilterOnlyDepsCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.depTypeFilterOnlyDeps",
+        cycleDepTypeFilterAndSync,
+    );
+    context.subscriptions.push(depTypeFilterOnlyDepsCommand);
+
+    const depTypeFilterOnlyDevDepsCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.depTypeFilterOnlyDevDeps",
+        cycleDepTypeFilterAndSync,
+    );
+    context.subscriptions.push(depTypeFilterOnlyDevDepsCommand);
+
+    const depTypeFilterBothCommand = vscode.commands.registerCommand(
+        "xtrem-nodes-hierarchy.depTypeFilterBoth",
+        cycleDepTypeFilterAndSync,
+    );
+    context.subscriptions.push(depTypeFilterBothCommand);
 
     // Sync packages tree view focus with the active editor
     const syncPackagesFocus = async (

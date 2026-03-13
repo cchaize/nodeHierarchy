@@ -111,6 +111,21 @@
                     "light": "media/filter-active.svg",
                     "dark": "media/filter-active.svg"
                 }
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.depTypeFilterOnlyDeps",
+                "title": "Showing: Dependencies Only",
+                "icon": "$(package)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.depTypeFilterOnlyDevDeps",
+                "title": "Showing: DevDependencies Only",
+                "icon": "$(beaker)"
+            },
+            {
+                "command": "xtrem-nodes-hierarchy.depTypeFilterBoth",
+                "title": "Showing: Both Dependencies",
+                "icon": "$(list-unordered)"
             }
         ],
         "menus": {
@@ -168,6 +183,21 @@
                 {
                     "command": "xtrem-nodes-hierarchy.togglePackageFilterActive",
                     "when": "view == packagesHierarchyView && xtremPackages.filterActive",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.depTypeFilterOnlyDeps",
+                    "when": "view == packagesHierarchyView && xtremPackages.depTypeFilter == dependencies",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.depTypeFilterOnlyDevDeps",
+                    "when": "view == packagesHierarchyView && xtremPackages.depTypeFilter == devDependencies",
+                    "group": "navigation"
+                },
+                {
+                    "command": "xtrem-nodes-hierarchy.depTypeFilterBoth",
+                    "when": "view == packagesHierarchyView && xtremPackages.depTypeFilter == both",
                     "group": "navigation"
                 }
             ],
