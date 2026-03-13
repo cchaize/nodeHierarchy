@@ -88,6 +88,9 @@ export async function activate(context: vscode.ExtensionContext) {
         "dependencies",
     );
 
+    // Show the initial dep-type filter label in the panel title area
+    packageTreeView.description = "dependencies only";
+
     // Register search command
     const searchCommand = vscode.commands.registerCommand(
         "xtrem-nodes-hierarchy.search",
@@ -566,6 +569,7 @@ export async function activate(context: vscode.ExtensionContext) {
             "xtremPackages.depTypeFilter",
             newFilter,
         );
+        packageTreeView.description = depTypeFilterLabels[newFilter];
         vscode.window.showInformationMessage(
             `Packages hierarchy: showing ${depTypeFilterLabels[newFilter]}`,
         );
